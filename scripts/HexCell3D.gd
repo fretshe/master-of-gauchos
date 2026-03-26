@@ -25,11 +25,22 @@ func get_side_geometry(side_index: int) -> Dictionary:
 		return {}
 
 	var side_length: float = float(marker.get_meta("side_length", 0.0))
+	var midpoint: Vector3 = marker.global_transform.origin
+	var outward_normal: Vector3 = marker.global_transform.basis.z.normalized()
+	var tangent: Vector3 = (-marker.global_transform.basis.x).normalized()
+	var half_length: float = side_length * 0.5
+	var start: Vector3 = midpoint - tangent * half_length
+	var finish: Vector3 = midpoint + tangent * half_length
 	return {
 		"cell": cell,
 		"side_index": posmod(side_index, SIDE_COUNT),
 		"marker": marker,
 		"length": side_length,
+		"start": start,
+		"end": finish,
+		"midpoint": midpoint,
+		"outward_normal": outward_normal,
+		"tangent": tangent,
 		"transform": marker.global_transform,
 	}
 
@@ -46,6 +57,7 @@ func get_camera_opposite_side_geometries(camera_world_pos: Vector3, side_count: 
 		return result
 
 	var camera_dir: Vector3 = camera_world_pos - get_center_world()
+	camera_dir.y = 0.0
 	if camera_dir.length_squared() <= 0.0001:
 		return result
 	camera_dir = camera_dir.normalized()
@@ -55,10 +67,11 @@ func get_camera_opposite_side_geometries(camera_world_pos: Vector3, side_count: 
 		var side_geometry: Dictionary = get_side_geometry(side_index)
 		if side_geometry.is_empty():
 			continue
-		var marker: Marker3D = side_geometry.get("marker") as Marker3D
-		if marker == null:
+		var outward_normal: Vector3 = side_geometry.get("outward_normal", Vector3.ZERO)
+		outward_normal.y = 0.0
+		if outward_normal.length_squared() <= 0.0001:
 			continue
-		var outward_normal: Vector3 = marker.global_transform.basis.z.normalized()
+		outward_normal = outward_normal.normalized()
 		scored_sides.append({
 			"geometry": side_geometry,
 			"score": outward_normal.dot(camera_dir),

@@ -8,6 +8,7 @@ const CombatHexWallScript := preload("res://scripts/CombatHexWall.gd")
 @export var wall_extra_height: float = 1.0
 @export var unit_height_reference: float = 1.45
 @export var wall_thickness: float = 0.05
+@export var wall_side_count: int = 2
 @export var wall_container_path: NodePath
 
 var hex_grid: Node = null
@@ -57,7 +58,10 @@ func end_combat() -> void:
 func _generate_walls_for_hex(hex_cell: HexCell3D, camera_world_pos: Vector3) -> void:
 	var target_container: Node = _get_wall_container()
 	var wall_height: float = unit_height_reference + wall_extra_height
-	var selected_sides: Array[Dictionary] = hex_cell.get_camera_opposite_side_geometries(camera_world_pos, 2)
+	var selected_sides: Array[Dictionary] = hex_cell.get_camera_opposite_side_geometries(
+		camera_world_pos,
+		maxi(1, wall_side_count)
+	)
 	for side_geometry: Dictionary in selected_sides:
 		var wall: Node3D = _instantiate_wall()
 		if wall == null:

@@ -19,15 +19,19 @@ func configure_from_side(side_geometry: Dictionary, wall_height: float, wall_thi
 		return
 
 	_ensure_mesh_instance()
-	global_transform = side_geometry["transform"]
-	# Edge markers expose +Z outward, so flip to make the wall face inward.
-	rotate_object_local(Vector3.UP, PI)
-
+	var side_transform: Transform3D = side_geometry.get("transform", Transform3D.IDENTITY)
 	var length: float = float(side_geometry.get("length", 0.0))
+	if length <= 0.0001:
+		return
+
+	global_transform = side_transform
+
 	var mesh := BoxMesh.new()
 	mesh.size = Vector3(length, wall_height, wall_thickness)
 	_mesh_instance.mesh = mesh
-	_mesh_instance.position = Vector3(0.0, wall_height * 0.5, 0.0)
+	# The edge transform sits exactly on the hex side plane and exposes +Z outward.
+	# Offset the box inward so its outer face matches the hex wall angle precisely.
+	_mesh_instance.position = Vector3(0.0, wall_height * 0.5, -wall_thickness * 0.5)
 	_mesh_instance.material_override = _build_material()
 
 

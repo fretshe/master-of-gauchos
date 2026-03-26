@@ -58,6 +58,7 @@ const HEX_VISUAL_RADIUS_FACTOR: float = 0.96
 const COMBAT_STAGE_WALL_EXTRA_HEIGHT: float = 1.0
 const COMBAT_STAGE_WALL_UNIT_HEIGHT: float = 1.45
 const COMBAT_STAGE_WALL_THICKNESS: float = 0.05
+const COMBAT_STAGE_WALL_SIDE_COUNT: int = 2
 const COMBAT_STAGE_WALL_ALPHA: float = 0.94
 
 # Flat-top odd-q neighbor offsets
@@ -131,6 +132,7 @@ const TILE_DIM_FACTOR_FOCUSED: float = 0.2
 @export var combat_wall_extra_height: float = COMBAT_STAGE_WALL_EXTRA_HEIGHT
 @export var combat_wall_unit_height: float = COMBAT_STAGE_WALL_UNIT_HEIGHT
 @export var combat_wall_thickness: float = COMBAT_STAGE_WALL_THICKNESS
+@export var combat_wall_side_count: int = COMBAT_STAGE_WALL_SIDE_COUNT
 @export var combat_wall_container_path: NodePath
 
 # Normal placement mode
@@ -1044,6 +1046,7 @@ func _ensure_combat_wall_system() -> void:
 		_combat_wall_system.wall_extra_height = combat_wall_extra_height
 		_combat_wall_system.unit_height_reference = combat_wall_unit_height
 		_combat_wall_system.wall_thickness = combat_wall_thickness
+		_combat_wall_system.wall_side_count = combat_wall_side_count
 		_combat_wall_system.wall_container_path = combat_wall_container_path
 		return
 
@@ -1054,6 +1057,7 @@ func _ensure_combat_wall_system() -> void:
 	_combat_wall_system.wall_extra_height = combat_wall_extra_height
 	_combat_wall_system.unit_height_reference = combat_wall_unit_height
 	_combat_wall_system.wall_thickness = combat_wall_thickness
+	_combat_wall_system.wall_side_count = combat_wall_side_count
 	_combat_wall_system.wall_container_path = combat_wall_container_path
 	add_child(_combat_wall_system)
 
@@ -1061,8 +1065,9 @@ func _ensure_combat_wall_system() -> void:
 func _add_hex_side_markers(tile: Node3D, tile_height: float, side_radius: float) -> void:
 	var top_y: float = tile_height * 0.5
 	var vertices: Array[Vector3] = []
+	var mesh_angle_offset: float = deg_to_rad(30.0)
 	for side_index: int in range(HexCell3DScript.SIDE_COUNT):
-		var angle: float = deg_to_rad(60.0 * float(side_index))
+		var angle: float = mesh_angle_offset + deg_to_rad(60.0 * float(side_index))
 		vertices.append(Vector3(cos(angle) * side_radius, top_y, sin(angle) * side_radius))
 
 	for side_index: int in range(HexCell3DScript.SIDE_COUNT):
