@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Dark background -->
+  <rect width="128" height="128" rx="22" fill="#1a1a2e"/>
+  <!-- Chat bubble body -->
+  <rect x="12" y="16" width="104" height="76" rx="14" fill="#7c3aed"/>
+  <!-- Bubble tail pointing down-left -->
+  <path d="M 22 92 L 10 116 L 48 92 Z" fill="#7c3aed"/>
+  <!-- Three animated dots -->
+  <circle cx="40" cy="54" r="10" fill="white" opacity="0.92"/>
+  <circle cx="64" cy="54" r="10" fill="white" opacity="0.92"/>
+  <circle cx="88" cy="54" r="10" fill="white" opacity="0.92"/>
+</svg>

@@ -1,0 +1,51 @@
+extends Node
+
+# ─── Signals ───────────────────────────────────────────────────────────────────
+signal resources_changed(player_id: int, amount: int)
+
+# ─── State ─────────────────────────────────────────────────────────────────────
+var _essence: Dictionary = { 1: 10, 2: 10, 3: 10, 4: 10 }
+
+# Set by Main.gd after both nodes are in the tree
+var hex_grid = null
+
+# ─── Public API ────────────────────────────────────────────────────────────────
+func get_essence(player_id: int) -> int:
+	return _essence.get(player_id, 0)
+
+func setup_players(player_count: int, starting_essence: int = 10) -> void:
+	_essence.clear()
+	var player_ids: Array[int] = GameData.get_player_ids() if GameData != null and GameData.has_method("get_player_ids") else []
+	if player_ids.is_empty():
+		for player_id: int in range(1, maxi(2, player_count) + 1):
+			_essence[player_id] = starting_essence
+		return
+	for player_id: int in player_ids:
+		_essence[player_id] = starting_essence
+
+func add_essence(player_id: int, amount: int) -> void:
+	_essence[player_id] = int(_essence.get(player_id, 0)) + amount
+	emit_signal("resources_changed", player_id, _essence[player_id])
+
+## Sums income from all towers owned by player_id and adds it to their essence.
+func add_income(player_id: int) -> void:
+	if hex_grid == null:
+		return
+	var total_income: int = 0
+	for tower in hex_grid.get_all_towers():
+		if tower.owner_id == player_id:
+			total_income += tower.income
+	if total_income > 0:
+		_essence[player_id] += total_income
+		emit_signal("resources_changed", player_id, _essence[player_id])
+
+func can_afford(player_id: int, cost: int) -> bool:
+	return _essence.get(player_id, 0) >= cost
+
+## Deducts cost from player's essence. Returns false without spending if insufficient.
+func spend(player_id: int, cost: int) -> bool:
+	if not can_afford(player_id, cost):
+		return false
+	_essence[player_id] -= cost
+	emit_signal("resources_changed", player_id, _essence[player_id])
+	return true

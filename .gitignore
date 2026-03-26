@@ -1,0 +1,9 @@
+.godot/
+.import/
+*.translation
+export_presets.cfg
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini

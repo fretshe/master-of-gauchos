@@ -1,0 +1,12 @@
+[gd_scene format=3 uid="uid://main3d"]
+
+[ext_resource type="Script" path="res://scripts/Main3D.gd" id="1_main3d"]
+[ext_resource type="Script" path="res://scripts/CameraController3D.gd" id="2_cam3d"]
+
+[node name="Main3D" type="Node3D"]
+script = ExtResource("1_main3d")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+script = ExtResource("2_cam3d")
+
+[node name="Units" type="Node3D" parent="."]

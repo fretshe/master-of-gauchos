@@ -1,0 +1,7 @@
+[gd_scene load_steps=2 format=3 uid="uid://claude_panel_scene"]
+
+[ext_resource type="Script" path="res://addons/claude_assistant/claude_panel.gd" id="1_cp"]
+
+[node name="ClaudePanel" type="Control"]
+custom_minimum_size = Vector2(270, 400)
+script = ExtResource("1_cp")

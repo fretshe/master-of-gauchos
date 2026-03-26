@@ -1,0 +1,7 @@
+[gd_scene load_steps=2 format=3 uid="uid://summon_menu_scene"]
+
+[ext_resource type="Script" path="res://scripts/SummonMenu.gd" id="1_sm"]
+
+[node name="SummonMenu" type="CanvasLayer"]
+layer = 20
+script = ExtResource("1_sm")
