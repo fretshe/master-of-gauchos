@@ -10,11 +10,12 @@ var music_combat = preload("res://assets/combat.mp3")
 var _player:            AudioStreamPlayer
 var _volume:            float       = 0.8
 var _pre_combat_stream: AudioStream = null
+var _muted:             bool        = false
 
 # ─── Lifecycle ────────────────────────────────────────────────────────────────
 func _ready() -> void:
 	_player           = AudioStreamPlayer.new()
-	_player.volume_db = linear_to_db(_volume)
+	_player.volume_db = _target_volume_db()
 	add_child(_player)
 	# Enable looping on all tracks
 	for s: AudioStream in [music_menu, music_blue, music_red, music_combat]:
@@ -23,7 +24,15 @@ func _ready() -> void:
 # ─── Public API ───────────────────────────────────────────────────────────────
 func set_music_volume(value: float) -> void:
 	_volume           = clampf(value, 0.0, 1.0)
-	_player.volume_db = linear_to_db(_volume)
+	_player.volume_db = _target_volume_db()
+
+func set_muted(value: bool) -> void:
+	_muted = value
+	if _player != null:
+		_player.volume_db = _target_volume_db()
+
+func is_muted() -> bool:
+	return _muted
 
 ## Plays the title / menu track.
 func play_menu_music() -> void:
@@ -60,4 +69,7 @@ func _fade_transition(stream: AudioStream) -> void:
 	_player.volume_db = -80.0
 	_player.play()
 	var tw_in: Tween = create_tween()
-	tw_in.tween_property(_player, "volume_db", linear_to_db(_volume), 1.0)
+	tw_in.tween_property(_player, "volume_db", _target_volume_db(), 1.0)
+
+func _target_volume_db() -> float:
+	return -80.0 if _muted or _volume <= 0.001 else linear_to_db(_volume)

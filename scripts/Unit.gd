@@ -6,9 +6,11 @@ class_name Unit
 enum UnitType  { WARRIOR, ARCHER, LANCER, RIDER }
 enum Level     { BRONZE = 1, SILVER = 2, GOLD = 3, DIAMOND = 4 }
 enum DiceColor { RED, YELLOW, GREEN, BLUE }
+const MASTER_UNIT_TYPE: int = -1
 
 # ─── Type names ─────────────────────────────────────────────────────────────────
 const TYPE_NAMES := {
+	MASTER_UNIT_TYPE:   "Master",
 	UnitType.WARRIOR: "Warrior",
 	UnitType.ARCHER:  "Archer",
 	UnitType.LANCER:  "Lancer",
@@ -34,17 +36,17 @@ const DICE := {
 # ─── Dice per unit type indexed by level-1 (0=BRONZE, 1=SILVER, 2=GOLD) ─────────
 # null means no die at that level
 const UNIT_MELEE_DICE := {
-	UnitType.WARRIOR: [DiceColor.YELLOW, DiceColor.GREEN, DiceColor.BLUE],
+	UnitType.WARRIOR: [DiceColor.YELLOW, DiceColor.GREEN,  DiceColor.BLUE],
 	UnitType.ARCHER:  [DiceColor.RED,    DiceColor.YELLOW, DiceColor.YELLOW],
-	UnitType.LANCER:  [DiceColor.RED,    DiceColor.YELLOW, DiceColor.BLUE],
+	UnitType.LANCER:  [DiceColor.RED,    DiceColor.YELLOW, DiceColor.GREEN],
 	UnitType.RIDER:   [DiceColor.YELLOW, DiceColor.GREEN,  DiceColor.BLUE],
 }
 
 const UNIT_RANGED_DICE := {
 	UnitType.WARRIOR: [null,             null,             DiceColor.RED],
 	UnitType.ARCHER:  [DiceColor.YELLOW, DiceColor.GREEN,  DiceColor.BLUE],
-	UnitType.LANCER:  [DiceColor.RED,    DiceColor.YELLOW, DiceColor.GREEN],
-	UnitType.RIDER:   [null,             DiceColor.RED,    DiceColor.RED],
+	UnitType.LANCER:  [DiceColor.RED,    DiceColor.RED,    DiceColor.YELLOW],
+	UnitType.RIDER:   [null,             DiceColor.RED,    DiceColor.YELLOW],
 }
 
 # ─── Base stats per type ─────────────────────────────────────────────────────────
@@ -60,6 +62,31 @@ const BASE_MOVE := {
 	UnitType.ARCHER:  3,
 	UnitType.LANCER:  3,
 	UnitType.RIDER:   5,
+}
+
+const BASE_ATTACKS_PER_COMBAT := {
+	MASTER_UNIT_TYPE: 2,
+	UnitType.WARRIOR: 3,
+	UnitType.ARCHER:  2,
+	UnitType.LANCER:  4,
+	UnitType.RIDER:   2,
+}
+
+const TERRAIN_ATTACK_MODIFIERS := {
+	0: 0,   # GRASS
+	1: -1,  # WATER
+	2: 2,   # MOUNTAIN
+	3: 1,   # FOREST
+	4: 0,   # DESERT
+	5: 0,   # VOLCANO
+	6: 0,   # CORDILLERA
+}
+
+const DAMAGE_SCALE_PER_HIT := {
+	UnitType.WARRIOR: [0.50, 0.50, 0.44],
+	UnitType.ARCHER:  [0.58, 0.52, 0.42],
+	UnitType.LANCER:  [0.44, 0.40, 0.38],
+	UnitType.RIDER:   [0.54, 0.48, 0.42],
 }
 
 # ─── Properties ─────────────────────────────────────────────────────────────────
@@ -98,31 +125,31 @@ func get_max_hp() -> int:
 	match unit_type:
 		UnitType.WARRIOR:
 			match level:
-				Level.BRONZE: return 8
-				Level.SILVER: return 16
-				Level.GOLD:   return 26
+				Level.BRONZE: return 13
+				Level.SILVER: return 24
+				Level.GOLD:   return 38
 		UnitType.ARCHER:
 			match level:
-				Level.BRONZE: return 5
-				Level.SILVER: return 12
-				Level.GOLD:   return 20
+				Level.BRONZE: return 8
+				Level.SILVER: return 14
+				Level.GOLD:   return 22
 		UnitType.LANCER:
 			match level:
-				Level.BRONZE: return 10
-				Level.SILVER: return 20
-				Level.GOLD:   return 35
+				Level.BRONZE: return 15
+				Level.SILVER: return 28
+				Level.GOLD:   return 43
 		UnitType.RIDER:
 			match level:
-				Level.BRONZE: return 10
-				Level.SILVER: return 18
-				Level.GOLD:   return 32
+				Level.BRONZE: return 12
+				Level.SILVER: return 22
+				Level.GOLD:   return 34
 	return 5
 
 func _apply_stats() -> void:
 	max_hp       = get_max_hp()
 	move_range   = BASE_MOVE.get(unit_type, 3)
 	hp           = max_hp
-	attack_range = 2 if has_ranged_attack() else 1
+	attack_range = get_default_attack_range()
 
 # ─── Combat ──────────────────────────────────────────────────────────────────────
 func take_damage(amount: int) -> bool:
@@ -140,6 +167,26 @@ func clear_hex_cell() -> void:
 
 func get_hex_cell() -> Vector2i:
 	return current_hex_cell
+
+
+func get_base_attack_count() -> int:
+	return BASE_ATTACKS_PER_COMBAT.get(unit_type, 2)
+
+
+func get_terrain_attack_modifier(terrain_type: int) -> int:
+	return TERRAIN_ATTACK_MODIFIERS.get(terrain_type, 0)
+
+
+func get_attack_count_for_terrain(terrain_type: int) -> int:
+	return clampi(get_base_attack_count() + get_terrain_attack_modifier(terrain_type), 1, 6)
+
+
+func get_damage_scale_per_hit() -> float:
+	var table: Array = DAMAGE_SCALE_PER_HIT.get(unit_type, [])
+	if table.is_empty():
+		return 1.0
+	var idx: int = clampi(level - 1, 0, table.size() - 1)
+	return float(table[idx])
 
 # ─── Experience & levelling ──────────────────────────────────────────────────────
 func get_exp_required() -> int:
@@ -167,7 +214,7 @@ func _level_up() -> void:
 	level       += 1
 	max_hp       = get_max_hp()
 	hp           = max_hp
-	attack_range = 2 if has_ranged_attack() else 1
+	attack_range = get_default_attack_range()
 	print("[Unit] %s subió a %s! HP:%d/%d MOV:%d" % [
 		unit_name, _level_name(), hp, max_hp, move_range
 	])
@@ -217,6 +264,17 @@ func get_ranged_dice() -> Array:
 func has_ranged_attack() -> bool:
 	return not get_ranged_dice().is_empty()
 
+func has_extended_attack_range() -> bool:
+	return unit_type == MASTER_UNIT_TYPE or unit_type == UnitType.ARCHER
+
+func get_default_attack_range() -> int:
+	return 2 if has_extended_attack_range() else 1
+
+func can_attack_at_distance(distance: int) -> bool:
+	if distance <= 1:
+		return true
+	return distance == 2 and has_extended_attack_range() and has_ranged_attack()
+
 func roll_dice(color: int) -> int:
 	var faces: Array = DICE.get(color, [0])
 	return faces[randi() % faces.size()]
@@ -232,9 +290,10 @@ static func get_damage_multiplier(attacker_type: int, defender_type: int) -> flo
 
 # ─── Debug ───────────────────────────────────────────────────────────────────────
 func stats_string() -> String:
-	return "[%s] %s (P%d) | %s | HP:%d/%d | MOV:%d(%s) | EXP:%d/%d" % [
+	return "[%s] %s (P%d) | %s | HP:%d/%d | MOV:%d(%s) | HIT:%d | EXP:%d/%d" % [
 		TYPE_NAMES.get(unit_type, "?"), unit_name, owner_id,
 		_level_name(), hp, max_hp,
 		move_range, "OK" if not moved else "X",
+		get_base_attack_count(),
 		experience, get_exp_required()
 	]

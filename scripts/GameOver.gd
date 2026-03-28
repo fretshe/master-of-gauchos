@@ -3,6 +3,7 @@ extends Control
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_PASS
+	GameData.load_meta()
 
 	var winner_id := GameData.winner_id
 	var turns     := GameData.turns_played
@@ -66,6 +67,24 @@ func _ready() -> void:
 	_add_stat(stats_vbox, "Torres capturadas (J1)",  str(towers_p1))
 	_add_stat(stats_vbox, "Torres capturadas (J2)",  str(towers_p2))
 
+	var new_unlocks: Array[String] = GameData.consume_new_unlocks()
+	if not new_unlocks.is_empty():
+		var unlocks_box := VBoxContainer.new()
+		unlocks_box.add_theme_constant_override("separation", 6)
+		unlocks_box.mouse_filter = Control.MOUSE_FILTER_PASS
+		vbox.add_child(unlocks_box)
+
+		var unlock_title := Label.new()
+		unlock_title.text = "Nuevo desbloqueo"
+		unlock_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		unlock_title.add_theme_font_size_override("font_size", 24)
+		unlock_title.add_theme_color_override("font_color", Color(0.96, 0.84, 0.28))
+		unlocks_box.add_child(unlock_title)
+
+		for unlock_id: String in new_unlocks:
+			var unlock_def: Dictionary = GameData.get_unlock_def(unlock_id)
+			_add_unlock(unlocks_box, str(unlock_def.get("name", unlock_id)))
+
 	# Buttons
 	var btn_row := HBoxContainer.new()
 	btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -86,6 +105,7 @@ func _ready() -> void:
 	btn_menu.add_theme_font_size_override("font_size", 20)
 	btn_menu.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/TitleScreen.tscn"))
 	btn_row.add_child(btn_menu)
+	GameData.call_deferred("apply_selected_theme", get_window())
 
 func _add_stat(parent: VBoxContainer, key: String, value: String) -> void:
 	var hbox := HBoxContainer.new()
@@ -106,3 +126,12 @@ func _add_stat(parent: VBoxContainer, key: String, value: String) -> void:
 	val_lbl.add_theme_color_override("font_color", Color(0.92, 0.92, 0.95))
 	val_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hbox.add_child(val_lbl)
+
+func _add_unlock(parent: VBoxContainer, text: String) -> void:
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", 18)
+	lbl.add_theme_color_override("font_color", Color(0.92, 0.92, 0.95))
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(lbl)

@@ -9,6 +9,189 @@ func _ready() -> void:
 	_canvas.layer = 100         # always above 3D viewport and HUD
 	add_child(_canvas)
 
+func _style_runtime_label(label: Label) -> void:
+	if label == null:
+		return
+	GameData.apply_selected_font_to_control(label)
+
+func show_card_projectile(world_from: Vector3, world_to: Vector3, color: Color) -> void:
+	var cam: Camera3D = get_viewport().get_camera_3d()
+	if cam == null:
+		return
+
+	var start: Vector2 = cam.unproject_position(world_from + Vector3(0.0, 1.55, 0.0))
+	var finish: Vector2 = cam.unproject_position(world_to + Vector3(0.0, 1.35, 0.0))
+
+	var root := Node2D.new()
+	root.position = start
+	_canvas.add_child(root)
+
+	var trail := Line2D.new()
+	trail.width = 8.0
+	trail.default_color = Color(color.r, color.g, color.b, 0.78)
+	trail.antialiased = false
+	trail.add_point(Vector2.ZERO)
+	trail.add_point(Vector2.ZERO)
+	root.add_child(trail)
+
+	var glow := Polygon2D.new()
+	glow.polygon = PackedVector2Array([
+		Vector2(0.0, -18.0),
+		Vector2(18.0, 0.0),
+		Vector2(0.0, 18.0),
+		Vector2(-18.0, 0.0),
+	])
+	glow.color = Color(color.r, color.g, color.b, 0.26)
+	glow.scale = Vector2(1.4, 1.4)
+	root.add_child(glow)
+
+	var core := Polygon2D.new()
+	core.polygon = PackedVector2Array([
+		Vector2(0.0, -9.0),
+		Vector2(9.0, 0.0),
+		Vector2(0.0, 9.0),
+		Vector2(-9.0, 0.0),
+	])
+	core.color = color.lightened(0.28)
+	root.add_child(core)
+
+	var travel: Vector2 = finish - start
+	root.rotation = travel.angle() + PI * 0.5
+
+	var tw := create_tween().set_parallel(true)
+	tw.tween_property(root, "position", finish, 0.34).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_method(
+		func(progress: float) -> void:
+			trail.set_point_position(1, Vector2(0.0, -travel.length() * progress))
+			var pulse: float = 1.0 + sin(progress * TAU * 3.0) * 0.12
+			core.scale = Vector2.ONE * pulse
+			glow.scale = Vector2.ONE * (1.3 + progress * 0.45),
+		0.0, 1.0, 0.34
+	)
+	tw.tween_property(trail, "modulate:a", 0.18, 0.34)
+	await tw.finished
+
+	var burst := Node2D.new()
+	burst.position = finish
+	_canvas.add_child(burst)
+
+	for radius: float in [18.0, 34.0]:
+		var ring := Line2D.new()
+		ring.width = 4.0 if radius < 20.0 else 2.0
+		ring.default_color = Color(color.r, color.g, color.b, 0.9)
+		ring.closed = true
+		ring.antialiased = false
+		var segments: int = 12
+		for i: int in range(segments):
+			var angle: float = (TAU * float(i)) / float(segments)
+			ring.add_point(Vector2.RIGHT.rotated(angle) * radius)
+		burst.add_child(ring)
+		var ring_tw := create_tween().set_parallel(true)
+		ring_tw.tween_property(ring, "scale", Vector2.ONE * 1.45, 0.22).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		ring_tw.tween_property(ring, "modulate:a", 0.0, 0.22)
+
+	var flash := Polygon2D.new()
+	flash.polygon = PackedVector2Array([
+		Vector2(0.0, -16.0),
+		Vector2(16.0, 0.0),
+		Vector2(0.0, 16.0),
+		Vector2(-16.0, 0.0),
+	])
+	flash.color = color.lightened(0.45)
+	burst.add_child(flash)
+	var burst_tw := create_tween().set_parallel(true)
+	burst_tw.tween_property(flash, "scale", Vector2.ONE * 2.1, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	burst_tw.tween_property(flash, "modulate:a", 0.0, 0.18)
+
+	await get_tree().create_timer(0.24).timeout
+	root.queue_free()
+	burst.queue_free()
+
+func show_screen_projectile(screen_from: Vector2, screen_to: Vector2, color: Color) -> void:
+	var root := Node2D.new()
+	root.position = screen_from
+	_canvas.add_child(root)
+
+	var trail := Line2D.new()
+	trail.width = 7.0
+	trail.default_color = Color(color.r, color.g, color.b, 0.80)
+	trail.antialiased = false
+	trail.add_point(Vector2.ZERO)
+	trail.add_point(Vector2.ZERO)
+	root.add_child(trail)
+
+	var glow := Polygon2D.new()
+	glow.polygon = PackedVector2Array([
+		Vector2(0.0, -14.0),
+		Vector2(14.0, 0.0),
+		Vector2(0.0, 14.0),
+		Vector2(-14.0, 0.0),
+	])
+	glow.color = Color(color.r, color.g, color.b, 0.30)
+	glow.scale = Vector2(1.25, 1.25)
+	root.add_child(glow)
+
+	var core := Polygon2D.new()
+	core.polygon = PackedVector2Array([
+		Vector2(0.0, -7.0),
+		Vector2(7.0, 0.0),
+		Vector2(0.0, 7.0),
+		Vector2(-7.0, 0.0),
+	])
+	core.color = color.lightened(0.32)
+	root.add_child(core)
+
+	var travel: Vector2 = screen_to - screen_from
+	root.rotation = travel.angle() + PI * 0.5
+
+	var tw := create_tween().set_parallel(true)
+	tw.tween_property(root, "position", screen_to, 0.28).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_method(
+		func(progress: float) -> void:
+			trail.set_point_position(1, Vector2(0.0, -travel.length() * progress))
+			core.scale = Vector2.ONE * (1.0 + sin(progress * TAU * 3.0) * 0.10)
+			glow.scale = Vector2.ONE * (1.2 + progress * 0.35),
+		0.0, 1.0, 0.28
+	)
+	tw.tween_property(trail, "modulate:a", 0.18, 0.28)
+	await tw.finished
+
+	var burst := Node2D.new()
+	burst.position = screen_to
+	_canvas.add_child(burst)
+
+	var flash := Polygon2D.new()
+	flash.polygon = PackedVector2Array([
+		Vector2(0.0, -14.0),
+		Vector2(14.0, 0.0),
+		Vector2(0.0, 14.0),
+		Vector2(-14.0, 0.0),
+	])
+	flash.color = color.lightened(0.45)
+	burst.add_child(flash)
+
+	for radius: float in [14.0, 26.0]:
+		var ring := Line2D.new()
+		ring.width = 3.0 if radius < 20.0 else 2.0
+		ring.default_color = Color(color.r, color.g, color.b, 0.88)
+		ring.closed = true
+		ring.antialiased = false
+		for i: int in range(12):
+			var angle: float = (TAU * float(i)) / 12.0
+			ring.add_point(Vector2.RIGHT.rotated(angle) * radius)
+		burst.add_child(ring)
+		var ring_tw := create_tween().set_parallel(true)
+		ring_tw.tween_property(ring, "scale", Vector2.ONE * 1.45, 0.18).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		ring_tw.tween_property(ring, "modulate:a", 0.0, 0.18)
+
+	var flash_tw := create_tween().set_parallel(true)
+	flash_tw.tween_property(flash, "scale", Vector2.ONE * 2.0, 0.16).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	flash_tw.tween_property(flash, "modulate:a", 0.0, 0.16)
+
+	await get_tree().create_timer(0.22).timeout
+	root.queue_free()
+	burst.queue_free()
+
 # ─── Coordinate helper ──────────────────────────────────────────────────────────
 ## Converts a world-space position to screen-space using the active camera transform.
 func _w2s(world_pos: Vector2) -> Vector2:
@@ -91,6 +274,7 @@ func show_damage_label(_host: Node, world_pos: Vector3, amount: int, type: Strin
 
 	# Sombra
 	var shadow := Label.new()
+	_style_runtime_label(shadow)
 	shadow.text                 = text
 	shadow.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	shadow.custom_minimum_size  = Vector2(w, 0.0)
@@ -102,6 +286,7 @@ func show_damage_label(_host: Node, world_pos: Vector3, amount: int, type: Strin
 
 	# Label principal
 	var lbl := Label.new()
+	_style_runtime_label(lbl)
 	lbl.text                 = text
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.custom_minimum_size  = Vector2(w, 0.0)
@@ -149,10 +334,140 @@ func show_world_text_label(world_pos: Vector3, text: String, color: Color, font_
 	var screen_pos: Vector2 = cam.unproject_position(world_pos + Vector3(0.0, y_world, 0.0))
 	show_screen_text_label(screen_pos, text, color, font_size)
 
+func show_combat_hit_label(world_pos: Vector3, hit_index: int, hit_count: int, color: Color = Color(1.0, 0.96, 0.72)) -> void:
+	show_world_text_label(
+		world_pos,
+		"GOLPE %d/%d" % [hit_index, hit_count],
+		color,
+		30,
+		2.25
+	)
+
+func create_combat_health_bar(world_pos: Vector3, current_hp: int, max_hp: int) -> Control:
+	var bar_root := Control.new()
+	bar_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar_root.custom_minimum_size = Vector2(180.0, 52.0)
+	_canvas.add_child(bar_root)
+
+	var back := ColorRect.new()
+	back.name = "Back"
+	back.position = Vector2.ZERO
+	back.size = Vector2(180.0, 24.0)
+	back.color = Color(0.03, 0.03, 0.03, 0.86)
+	bar_root.add_child(back)
+
+	var fill := ColorRect.new()
+	fill.name = "Fill"
+	fill.position = Vector2(3.0, 3.0)
+	fill.size = Vector2(174.0, 18.0)
+	bar_root.add_child(fill)
+
+	var label := Label.new()
+	_style_runtime_label(label)
+	label.name = "Value"
+	label.position = Vector2(0.0, -1.0)
+	label.size = Vector2(180.0, 24.0)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 18)
+	label.add_theme_color_override("font_color", Color.WHITE)
+	label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.75))
+	label.add_theme_constant_override("shadow_offset_x", 1)
+	label.add_theme_constant_override("shadow_offset_y", 1)
+	bar_root.add_child(label)
+
+	var matchup := Label.new()
+	_style_runtime_label(matchup)
+	matchup.name = "Matchup"
+	matchup.position = Vector2(0.0, 24.0)
+	matchup.size = Vector2(180.0, 24.0)
+	matchup.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	matchup.add_theme_font_size_override("font_size", 16)
+	matchup.add_theme_color_override("font_color", Color.WHITE)
+	matchup.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.75))
+	matchup.add_theme_constant_override("shadow_offset_x", 1)
+	matchup.add_theme_constant_override("shadow_offset_y", 1)
+	matchup.text = ""
+	bar_root.add_child(matchup)
+
+	update_combat_health_bar(bar_root, world_pos, current_hp, max_hp, false)
+	return bar_root
+
+func update_combat_health_bar(bar_root: Control, world_pos: Vector3, current_hp: int, max_hp: int, animate: bool = true) -> void:
+	if bar_root == null or not is_instance_valid(bar_root):
+		return
+	var cam: Camera3D = get_viewport().get_camera_3d()
+	if cam == null:
+		return
+
+	var screen_pos: Vector2 = _combat_bar_screen_pos(cam, world_pos)
+	bar_root.position = screen_pos - Vector2(90.0, 16.0)
+
+	var ratio: float = 0.0 if max_hp <= 0 else clampf(float(current_hp) / float(max_hp), 0.0, 1.0)
+	var fill: ColorRect = bar_root.get_node_or_null("Fill") as ColorRect
+	var label: Label = bar_root.get_node_or_null("Value") as Label
+	if fill != null:
+		fill.color = _combat_health_color(ratio)
+		var target_width: float = maxf(2.0, 174.0 * ratio)
+		if animate:
+			var tw := fill.create_tween()
+			tw.tween_property(fill, "size:x", target_width, 0.18) \
+				.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		else:
+			fill.size.x = target_width
+	if label != null:
+		label.text = "%d / %d" % [current_hp, max_hp]
+
+func set_combat_health_bar_matchup(bar_root: Control, state: int) -> void:
+	if bar_root == null or not is_instance_valid(bar_root):
+		return
+	var matchup: Label = bar_root.get_node_or_null("Matchup") as Label
+	if matchup == null:
+		return
+	match state:
+		1:
+			matchup.text = "▲ VENTAJA"
+			matchup.add_theme_color_override("font_color", Color(0.36, 1.0, 0.42, 1.0))
+		-1:
+			matchup.text = "▼ DESVENTAJA"
+			matchup.add_theme_color_override("font_color", Color(1.0, 0.34, 0.34, 1.0))
+		_:
+			matchup.text = ""
+			matchup.add_theme_color_override("font_color", Color.WHITE)
+
+func remove_combat_health_bar(bar_root: Control) -> void:
+	if bar_root != null and is_instance_valid(bar_root):
+		bar_root.queue_free()
+
+func _combat_health_color(ratio: float) -> Color:
+	if ratio <= 0.25:
+		return Color(1.00, 0.24, 0.24, 0.96)
+	if ratio <= 0.55:
+		return Color(1.00, 0.76, 0.18, 0.96)
+	return Color(0.26, 0.94, 0.42, 0.96)
+
+func _combat_bar_screen_pos(cam: Camera3D, world_pos: Vector3) -> Vector2:
+	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
+	var anchor_heights: Array[float] = [0.20, 0.12, 0.05, 0.0]
+	var projected: Vector2 = viewport_size * 0.5
+
+	for height: float in anchor_heights:
+		var sample_pos: Vector3 = world_pos + Vector3(0.0, height, 0.0)
+		if cam.is_position_behind(sample_pos):
+			continue
+		projected = cam.unproject_position(sample_pos)
+		break
+
+	projected += Vector2(0.0, 108.0)
+
+	projected.x = clampf(projected.x, 78.0, viewport_size.x - 78.0)
+	projected.y = clampf(projected.y, 120.0, viewport_size.y - 70.0)
+	return projected
+
 func show_screen_text_label(screen_pos: Vector2, text: String, color: Color, font_size: int = 56) -> void:
 	var w: float = 320.0
 	var base_x: float = screen_pos.x - w * 0.5
 	var shadow := Label.new()
+	_style_runtime_label(shadow)
 	shadow.text = text
 	shadow.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	shadow.custom_minimum_size = Vector2(w, 0.0)
@@ -163,6 +478,7 @@ func show_screen_text_label(screen_pos: Vector2, text: String, color: Color, fon
 	_canvas.add_child(shadow)
 
 	var lbl := Label.new()
+	_style_runtime_label(lbl)
 	lbl.text = text
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.custom_minimum_size = Vector2(w, 0.0)
@@ -243,6 +559,7 @@ func show_damage_3d(world_pos_3d: Vector3, amount: int, type: String) -> void:
 
 	# ── Shadow label (rendered behind for depth) ──────────────────────────────
 	var shadow := Label.new()
+	_style_runtime_label(shadow)
 	shadow.text                  = text
 	shadow.horizontal_alignment  = HORIZONTAL_ALIGNMENT_CENTER
 	shadow.custom_minimum_size   = Vector2(w, 0.0)
@@ -254,6 +571,7 @@ func show_damage_3d(world_pos_3d: Vector3, amount: int, type: String) -> void:
 
 	# ── Main label ────────────────────────────────────────────────────────────
 	var lbl := Label.new()
+	_style_runtime_label(lbl)
 	lbl.text                 = text
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.custom_minimum_size  = Vector2(w, 0.0)
@@ -304,6 +622,7 @@ func show_damage_3d(world_pos_3d: Vector3, amount: int, type: String) -> void:
 ## amount is used for "damage" and "critical"; ignored otherwise.
 func show_damage(world_pos: Vector2, amount: int, type: String) -> void:
 	var lbl := Label.new()
+	_style_runtime_label(lbl)
 	var jitter := Vector2(randf_range(-10.0, 10.0), randf_range(-4.0, 4.0))
 	var screen_pos: Vector2 = _w2s(world_pos) + jitter + Vector2(-14.0, -28.0)
 
@@ -482,6 +801,7 @@ func show_dice_roll_3d(world_pos_3d: Vector3, die_color: int, result: int,
 
 	# Color abbreviation label (top-left)
 	var lbl_color: Label = Label.new()
+	_style_runtime_label(lbl_color)
 	lbl_color.text = DICE_LABELS[clampi(die_color, 0, DICE_LABELS.size() - 1)]
 	lbl_color.position = Vector2(4.0, 2.0)
 	lbl_color.add_theme_font_size_override("font_size", 11)
@@ -490,6 +810,7 @@ func show_dice_roll_3d(world_pos_3d: Vector3, die_color: int, result: int,
 
 	# Main result label (centered)
 	var lbl_val: Label = Label.new()
+	_style_runtime_label(lbl_val)
 	lbl_val.text = "?"
 	lbl_val.set_anchors_preset(Control.PRESET_FULL_RECT)
 	lbl_val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

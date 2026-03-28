@@ -21,15 +21,16 @@ var   ROWS:     int   = 16
 const HEX_SIZE: float = 64.0
 
 # ─── Terrain ───────────────────────────────────────────────────────────────────
-enum Terrain { GRASS, WATER, MOUNTAIN, FOREST, DESERT, VOLCANO }
+enum Terrain { GRASS, WATER, MOUNTAIN, FOREST, DESERT, VOLCANO, CORDILLERA }
 
 const TERRAIN_COLORS: Dictionary = {
 	Terrain.GRASS:    Color(0.44, 0.76, 0.33),
 	Terrain.WATER:    Color(0.20, 0.53, 0.87),
 	Terrain.MOUNTAIN: Color(0.60, 0.60, 0.60),
 	Terrain.FOREST:   Color(0.13, 0.45, 0.13),
-	Terrain.DESERT:   Color(0.93, 0.85, 0.47),
+	Terrain.DESERT:   Color(0.76, 0.66, 0.34),
 	Terrain.VOLCANO:  Color(0.72, 0.18, 0.05),
+	Terrain.CORDILLERA: Color(0.20, 0.22, 0.26),
 }
 
 const TERRAIN_NAMES: Dictionary = {
@@ -39,6 +40,7 @@ const TERRAIN_NAMES: Dictionary = {
 	Terrain.FOREST:   "Forest",
 	Terrain.DESERT:   "Desert",
 	Terrain.VOLCANO:  "Volcano",
+	Terrain.CORDILLERA: "Cordillera",
 }
 
 # Static fallback used in the editor / if MapGenerator hasn't run yet (24 cols × 16 rows)
@@ -134,11 +136,17 @@ var _placement_master_cell: Vector2i = Vector2i(-1, -1)
 
 # ─── Master sprites (AnimatedSprite2D, keyed by Unit reference) ─────────────────
 var _master_sprites: Dictionary = {}   # Unit → AnimatedSprite2D
+var _pending_tower_captures: Dictionary = {}   # Vector2i -> player_id
 
 # ─── Public API ────────────────────────────────────────────────────────────────
-func place_unit(unit: Unit, col: int, row: int) -> void:
-	_units[Vector2i(col, row)] = unit
+func place_unit(unit: Unit, col: int, row: int, defer_tower_capture: bool = false) -> void:
+	var cell := Vector2i(col, row)
+	_units[cell] = unit
 	unit.visual_pos = to_global(hex_to_screen(col, row))  # store world-space position
+	if defer_tower_capture:
+		var tower: Tower = _towers.get(cell, null)
+		if tower != null and tower.owner_id != unit.owner_id:
+			_pending_tower_captures[cell] = unit.owner_id
 
 func get_unit_at(col: int, row: int) -> Unit:
 	return _units.get(Vector2i(col, row), null)
@@ -148,6 +156,44 @@ func get_all_units() -> Array:
 
 func get_all_towers() -> Array:
 	return _towers.values()
+
+func resolve_end_turn_tower_captures(player_id: int) -> void:
+	var pending_cells: Array[Vector2i] = []
+	for cell_value: Variant in _pending_tower_captures.keys():
+		var cell: Vector2i = cell_value as Vector2i
+		if int(_pending_tower_captures.get(cell, 0)) == player_id:
+			pending_cells.append(cell)
+	for cell: Vector2i in pending_cells:
+		_pending_tower_captures.erase(cell)
+		var unit: Unit = _units.get(cell, null)
+		var tower: Tower = _towers.get(cell, null)
+		if unit == null or tower == null:
+			continue
+		if unit.owner_id != player_id or tower.owner_id == unit.owner_id:
+			continue
+		var capture_bonus: int = tower.capture(unit.owner_id)
+		if resource_manager != null and capture_bonus > 0:
+			resource_manager.add_essence(unit.owner_id, capture_bonus)
+		emit_signal("tower_captured", tower.tower_name, unit.owner_id)
+		AudioManager.play_capture()
+		if capture_bonus > 0:
+			AudioManager.play_essence()
+
+func heal_units_on_owned_towers(player_id: int, amount: int = 1) -> int:
+	var healed_count: int = 0
+	for cell_value: Variant in _towers.keys():
+		var cell: Vector2i = cell_value as Vector2i
+		var tower: Tower = _towers.get(cell, null)
+		if tower == null or tower.owner_id != player_id:
+			continue
+		var unit: Unit = _units.get(cell, null)
+		if unit == null or unit.owner_id != player_id:
+			continue
+		if unit.hp >= unit.max_hp:
+			continue
+		unit.hp = mini(unit.max_hp, unit.hp + amount)
+		healed_count += 1
+	return healed_count
 
 func get_tower_at(col: int, row: int) -> Tower:
 	return _towers.get(Vector2i(col, row), null)
@@ -271,6 +317,14 @@ func _find_master_cell(player_id: int) -> Vector2i:
 			return cell
 	return Vector2i(-1, -1)
 
+func _is_valid_summon_cell(cell: Vector2i) -> bool:
+	if cell == Vector2i(-1, -1):
+		return false
+	if get_unit_at(cell.x, cell.y) != null:
+		return false
+	var terrain: int = _map_terrain[cell.y][cell.x]
+	return terrain != Terrain.WATER and terrain != Terrain.CORDILLERA
+
 # ─── Highlight computation (Dijkstra with terrain costs) ───────────────────────
 func _compute_highlights(col: int, row: int, unit: Unit) -> void:
 	_move_cells.clear()
@@ -304,19 +358,14 @@ func _compute_highlights(col: int, row: int, unit: Unit) -> void:
 
 		for nb: Vector2i in _get_neighbors(current.x, current.y):
 			var terrain: int = _map_terrain[nb.y][nb.x]
-			# Water is completely impassable
-			if terrain == Terrain.WATER:
+			# Water and Cordillera are completely impassable
+			if terrain == Terrain.WATER or terrain == Terrain.CORDILLERA:
 				continue
 			var step: int     = 2 if (terrain == Terrain.MOUNTAIN or terrain == Terrain.FOREST) else 1
 			var new_cost: int = cost + step
 
 			var nb_unit: Unit = _units.get(nb, null)
-			if nb_unit != null:
-				# Enemy: mark attackable from here, but can't path through
-				if nb_unit.owner_id != unit.owner_id and nb not in _attack_cells:
-					_attack_cells.append(nb)
-				# Friendly: blocked, skip
-			else:
+			if nb_unit == null:
 				# Empty reachable cell
 				if new_cost <= moves_left and (not visited.has(nb) or visited[nb] > new_cost):
 					visited[nb] = new_cost
@@ -331,8 +380,8 @@ func _compute_highlights(col: int, row: int, unit: Unit) -> void:
 			if nb not in _attack_cells:
 				_attack_cells.append(nb)
 
-	# Ranged attack cells: Archer — enemies at exactly hex-distance 2 (orange)
-	if unit.attack_range >= 2:
+	# Ranged attack cells: Archer/Master — enemies at exactly hex-distance 2 (orange)
+	if unit.can_attack_at_distance(2):
 		for c2 in range(COLS):
 			for r2 in range(ROWS):
 				var target := Vector2i(c2, r2)
@@ -397,7 +446,7 @@ func _input(event: InputEvent) -> void:
 
 	# ── Master placement mode (adjacent cells only, free summon) ──────────────
 	if _master_placement_mode:
-		if cell != Vector2i(-1, -1) and get_unit_at(cell.x, cell.y) == null:
+		if _is_valid_summon_cell(cell):
 			var adj: Array = _get_neighbors(_master_placement_cell.x, _master_placement_cell.y)
 			if cell in adj:
 				emit_signal("master_placement_confirmed", cell.x, cell.y,
@@ -407,7 +456,7 @@ func _input(event: InputEvent) -> void:
 
 	# ── Normal placement mode ─────────────────────────────────────────────────
 	if _placement_mode:
-		if cell != Vector2i(-1, -1) and get_unit_at(cell.x, cell.y) == null:
+		if _is_valid_summon_cell(cell):
 			var can_place: bool = false
 			if _placement_master_cell != Vector2i(-1, -1):
 				var adj: Array = _get_neighbors(_placement_master_cell.x, _placement_master_cell.y)
@@ -499,9 +548,13 @@ func _move_unit(from: Vector2i, to: Vector2i) -> void:
 	# Tower capture (after move lands)
 	var tower: Tower = _towers.get(to, null)
 	if tower != null and tower.owner_id != unit.owner_id:
-		tower.capture(unit.owner_id)
+		var capture_bonus: int = tower.capture(unit.owner_id)
+		if resource_manager != null and capture_bonus > 0:
+			resource_manager.add_essence(unit.owner_id, capture_bonus)
 		emit_signal("tower_captured", tower.tower_name, unit.owner_id)
 		AudioManager.play_capture()
+		if capture_bonus > 0:
+			AudioManager.play_essence()
 		VFXManager.particles_capture(to_screen)
 		animation_manager.animate_capture(tower)
 		await animation_manager.animation_finished
@@ -528,8 +581,8 @@ func _initiate_combat(attacker_cell: Vector2i, defender_cell: Vector2i) -> void:
 
 	var attacker: Unit = _units[attacker_cell]
 	var defender: Unit = _units[defender_cell]
-	# Ranged if attacker has attack_range >= 2 and the target is more than 1 hex away
-	var is_ranged: bool = attacker.attack_range >= 2 and \
+	# Ranged only for units with explicit extended range and targets beyond adjacency.
+	var is_ranged: bool = attacker.can_attack_at_distance(_hex_distance(attacker_cell, defender_cell)) and \
 			_hex_distance(attacker_cell, defender_cell) > 1
 
 	# Exhaust attacker moves
@@ -616,7 +669,7 @@ func _draw() -> void:
 	# Pass 1.5: normal placement overlay — purple, adjacent to Master only
 	if _placement_mode and _placement_master_cell != Vector2i(-1, -1):
 		for adj: Vector2i in _get_neighbors(_placement_master_cell.x, _placement_master_cell.y):
-			if get_unit_at(adj.x, adj.y) == null:
+			if _is_valid_summon_cell(adj):
 				var ctr := hex_to_screen(adj.x, adj.y)
 				var pts2 := PackedVector2Array()
 				for v: Vector2 in _hex_verts:
@@ -629,7 +682,7 @@ func _draw() -> void:
 	# Pass 1.6: master placement overlay — purple, adjacent to Master only (free summon)
 	if _master_placement_mode and _master_placement_cell != Vector2i(-1, -1):
 		for adj: Vector2i in _get_neighbors(_master_placement_cell.x, _master_placement_cell.y):
-			if get_unit_at(adj.x, adj.y) == null:
+			if _is_valid_summon_cell(adj):
 				var ctr := hex_to_screen(adj.x, adj.y)
 				var pts2 := PackedVector2Array()
 				for v: Vector2 in _hex_verts:
@@ -866,8 +919,10 @@ func _draw_crown_marker(center: Vector2, h: float, alpha: float = 1.0) -> void:
 # ─── Placement helpers ─────────────────────────────────────────────────────────
 func _place_towers() -> void:
 	var positions: Array
+	var incomes: Array = []
 	if GameData.map_tower_positions.size() > 0:
 		positions = GameData.map_tower_positions
+		incomes = GameData.map_tower_incomes
 	else:
 		positions = [
 			Vector2i(4, 4),  Vector2i(4, 11),
@@ -880,7 +935,7 @@ func _place_towers() -> void:
 		var tower         := TowerScript.new()
 		tower.tower_name  = "Tower %d" % (i + 1)
 		tower.owner_id    = 0
-		tower.income      = 2
+		tower.income      = int(incomes[i]) if i < incomes.size() else 2
 		tower.position    = pos
 		_towers[pos]      = tower
 	print("[HexGrid] Towers placed at: %s" % str(positions))

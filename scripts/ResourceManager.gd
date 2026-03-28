@@ -28,9 +28,9 @@ func add_essence(player_id: int, amount: int) -> void:
 	emit_signal("resources_changed", player_id, _essence[player_id])
 
 ## Sums income from all towers owned by player_id and adds it to their essence.
-func add_income(player_id: int) -> void:
+func add_income(player_id: int) -> int:
 	if hex_grid == null:
-		return
+		return 0
 	var total_income: int = 0
 	for tower in hex_grid.get_all_towers():
 		if tower.owner_id == player_id:
@@ -38,6 +38,7 @@ func add_income(player_id: int) -> void:
 	if total_income > 0:
 		_essence[player_id] += total_income
 		emit_signal("resources_changed", player_id, _essence[player_id])
+	return total_income
 
 func can_afford(player_id: int, cost: int) -> bool:
 	return _essence.get(player_id, 0) >= cost
@@ -49,3 +50,14 @@ func spend(player_id: int, cost: int) -> bool:
 	_essence[player_id] -= cost
 	emit_signal("resources_changed", player_id, _essence[player_id])
 	return true
+
+func serialize_state() -> Dictionary:
+	return {
+		"essence": _essence.duplicate(true),
+	}
+
+func load_state(state: Dictionary) -> void:
+	_essence = state.get("essence", {}).duplicate(true)
+	for player_id: int in GameData.get_player_ids():
+		if not _essence.has(player_id):
+			_essence[player_id] = 10

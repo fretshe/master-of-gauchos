@@ -22,6 +22,16 @@ func end_turn() -> void:
 	if _game_ended:
 		return
 
+	if hex_grid != null and hex_grid.has_method("resolve_end_turn_tower_captures"):
+		hex_grid.call("resolve_end_turn_tower_captures", current_player)
+		_check_win_condition()
+		if _game_ended:
+			return
+	if hex_grid != null and hex_grid.has_method("heal_units_on_owned_towers"):
+		var healed_units: int = int(hex_grid.call("heal_units_on_owned_towers", current_player, 1))
+		if healed_units > 0:
+			AudioManager.play_card("heal")
+
 	_reset_units_for(current_player)
 	CardManager.end_turn_reset()
 
@@ -39,8 +49,11 @@ func end_turn() -> void:
 
 	# Collect income for the newly active player
 	if resource_manager != null:
-		resource_manager.add_income(current_player)
-		AudioManager.play_essence()
+		var gained_income: int = int(resource_manager.add_income(current_player))
+		if gained_income > 0:
+			AudioManager.play_essence()
+			if hex_grid != null and hex_grid.has_method("play_tower_income_feedback"):
+				hex_grid.call("play_tower_income_feedback", current_player)
 		print("[TurnManager] Esencia — P1: %d  |  P2: %d" % [
 			resource_manager.get_essence(1),
 			resource_manager.get_essence(2),
@@ -82,6 +95,11 @@ func _check_win_condition() -> void:
 	if hex_grid == null or _game_ended:
 		return
 
+	var tower_winner: int = _get_tower_domination_winner()
+	if tower_winner != 0:
+		_declare_winner(tower_winner)
+		return
+
 	var alive_players: Array[int] = []
 	for player_id: int in GameData.get_player_ids():
 		if _eliminated_players.get(player_id, false):
@@ -101,6 +119,28 @@ func _check_win_condition() -> void:
 	elif alive_players.size() == 1:
 		_declare_winner(alive_players[0])
 
+func _get_tower_domination_winner() -> int:
+	if hex_grid == null or not hex_grid.has_method("get_all_towers"):
+		return 0
+
+	var towers: Array = hex_grid.get_all_towers()
+	if towers.is_empty():
+		return 0
+
+	var owner_id: int = -1
+	for tower_value: Variant in towers:
+		var tower: Tower = tower_value as Tower
+		if tower == null:
+			continue
+		if tower.owner_id <= 0:
+			return 0
+		if owner_id == -1:
+			owner_id = tower.owner_id
+		elif tower.owner_id != owner_id:
+			return 0
+
+	return maxi(0, owner_id)
+
 ## Called when HexGrid detects a Master has been killed during combat.
 func handle_master_killed(dead_player_id: int) -> void:
 	_eliminated_players[dead_player_id] = true
@@ -111,6 +151,9 @@ func handle_master_killed(dead_player_id: int) -> void:
 	emit_signal("turn_changed", current_player)
 	_check_win_condition()
 
+func handle_tower_captured(_capturing_player_id: int) -> void:
+	_check_win_condition()
+
 func _declare_winner(winner_id: int) -> void:
 	_game_ended = true
 	if winner_id == 0:
@@ -118,3 +161,16 @@ func _declare_winner(winner_id: int) -> void:
 	else:
 		print("[TurnManager] *** GAME OVER — Player %d wins! ***" % winner_id)
 	emit_signal("game_over", winner_id)
+
+func serialize_state() -> Dictionary:
+	return {
+		"current_player": current_player,
+		"turn_number": turn_number,
+		"eliminated_players": _eliminated_players.duplicate(true),
+	}
+
+func load_state(state: Dictionary) -> void:
+	current_player = int(state.get("current_player", 1))
+	turn_number = int(state.get("turn_number", 1))
+	_eliminated_players = (state.get("eliminated_players", {}) as Dictionary).duplicate(true)
+	_game_ended = false

@@ -10,6 +10,7 @@ uniform float night_glow_strength : hint_range(0.0, 1.5) = 0.0;
 uniform float shadow_threshold : hint_range(0.0, 1.0) = 0.24;
 uniform float highlight_threshold : hint_range(0.0, 1.0) = 0.68;
 uniform float band_smoothness : hint_range(0.001, 0.20) = 0.04;
+uniform float light_bands : hint_range(2.0, 5.0) = 3.0;
 uniform vec3 shadow_tint : source_color = vec3(0.46, 0.46, 0.54);
 uniform vec3 mid_tint : source_color = vec3(0.82, 0.82, 0.88);
 uniform vec3 highlight_tint : source_color = vec3(1.12, 1.12, 1.16);
@@ -24,8 +25,9 @@ void fragment() {
 
 void light() {
 	float ndotl = max(dot(NORMAL, LIGHT), 0.0);
-	float shadow_band = smoothstep(shadow_threshold - band_smoothness, shadow_threshold + band_smoothness, ndotl);
-	float highlight_band = smoothstep(highlight_threshold - band_smoothness, highlight_threshold + band_smoothness, ndotl);
+	float stepped_ndotl = floor(ndotl * light_bands) / max(light_bands - 1.0, 1.0);
+	float shadow_band = smoothstep(shadow_threshold - band_smoothness, shadow_threshold + band_smoothness, stepped_ndotl);
+	float highlight_band = smoothstep(highlight_threshold - band_smoothness, highlight_threshold + band_smoothness, stepped_ndotl);
 
 	vec3 band_color = ALBEDO * shadow_tint;
 	band_color = mix(band_color, ALBEDO * mid_tint, shadow_band);

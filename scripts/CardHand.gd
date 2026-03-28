@@ -1,10 +1,13 @@
 extends CanvasLayer
 
+const TutorialOutlineScript := preload("res://scripts/TutorialOutline.gd")
+
 var turn_manager: Node = null
 var hex_grid: Node = null
 
 var _root: Control = null
 var _panel: Panel = null
+var _tutorial_outline: TutorialOutline = null
 var _message_label: Label = null
 var _slot_nodes: Array[Dictionary] = []
 var _hovered_card_index: int = -1
@@ -106,8 +109,8 @@ func _build_ui() -> void:
 	add_child(_root)
 
 	_panel = Panel.new()
-	_panel.position = Vector2(520.0, 518.0)
-	_panel.size = Vector2(240.0, 108.0)
+	_panel.position = Vector2(540.0, 562.0)
+	_panel.size = Vector2(294.0, 124.0)
 	_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var panel_style := StyleBoxFlat.new()
 	panel_style.bg_color = Color(0.08, 0.09, 0.12, 0.55)
@@ -116,8 +119,14 @@ func _build_ui() -> void:
 	_panel.add_theme_stylebox_override("panel", panel_style)
 	_root.add_child(_panel)
 
+	_tutorial_outline = TutorialOutlineScript.new()
+	_tutorial_outline.position = _panel.position - Vector2(8.0, 8.0)
+	_tutorial_outline.size = _panel.size + Vector2(16.0, 16.0)
+	_tutorial_outline.visible = false
+	_root.add_child(_tutorial_outline)
+
 	_message_label = Label.new()
-	_message_label.position = Vector2(460.0, 488.0)
+	_message_label.position = Vector2(536.0, 532.0)
 	_message_label.size = Vector2(360.0, 24.0)
 	_message_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_message_label.add_theme_font_size_override("font_size", 14)
@@ -126,13 +135,13 @@ func _build_ui() -> void:
 
 	for i: int in range(3):
 		var slot_panel := Panel.new()
-		slot_panel.position = Vector2(10.0 + float(i) * 76.0, 9.0)
-		slot_panel.size = Vector2(60.0, 90.0)
+		slot_panel.position = Vector2(12.0 + float(i) * 92.0, 10.0)
+		slot_panel.size = Vector2(74.0, 102.0)
 		slot_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 
 		var glow := ColorRect.new()
-		glow.position = Vector2(-5.0, -5.0)
-		glow.size = Vector2(70.0, 100.0)
+		glow.position = Vector2(-6.0, -6.0)
+		glow.size = Vector2(86.0, 114.0)
 		glow.color = Color(1.0, 1.0, 1.0, 0.0)
 		glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		glow.visible = false
@@ -141,8 +150,8 @@ func _build_ui() -> void:
 		var motes: Array = []
 		for mote_index: int in range(4):
 			var mote := ColorRect.new()
-			mote.size = Vector2(5.0, 5.0)
-			mote.position = Vector2(10.0 + float(mote_index) * 11.0, 72.0)
+			mote.size = Vector2(6.0, 6.0)
+			mote.position = Vector2(12.0 + float(mote_index) * 14.0, 84.0)
 			mote.color = Color(1.0, 1.0, 1.0, 0.0)
 			mote.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			mote.visible = false
@@ -157,27 +166,27 @@ func _build_ui() -> void:
 		_panel.add_child(slot_panel)
 
 		var type_label := Label.new()
-		type_label.position = Vector2(4.0, 5.0)
-		type_label.size = Vector2(52.0, 12.0)
+		type_label.position = Vector2(5.0, 6.0)
+		type_label.size = Vector2(64.0, 14.0)
 		type_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		type_label.add_theme_font_size_override("font_size", 9)
+		type_label.add_theme_font_size_override("font_size", 10)
 		type_label.add_theme_color_override("font_color", Color(0.98, 0.98, 1.0))
 		slot_panel.add_child(type_label)
 
 		var icon_label := Label.new()
-		icon_label.position = Vector2(0.0, 18.0)
-		icon_label.size = Vector2(60.0, 18.0)
+		icon_label.position = Vector2(0.0, 22.0)
+		icon_label.size = Vector2(74.0, 20.0)
 		icon_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		icon_label.add_theme_font_size_override("font_size", 16)
+		icon_label.add_theme_font_size_override("font_size", 18)
 		icon_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0))
 		slot_panel.add_child(icon_label)
 
 		var value_label := Label.new()
-		value_label.position = Vector2(0.0, 40.0)
-		value_label.size = Vector2(60.0, 28.0)
+		value_label.position = Vector2(0.0, 48.0)
+		value_label.size = Vector2(74.0, 32.0)
 		value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		value_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		value_label.add_theme_font_size_override("font_size", 28)
+		value_label.add_theme_font_size_override("font_size", 32)
 		value_label.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0))
 		slot_panel.add_child(value_label)
 
@@ -201,6 +210,24 @@ func _build_ui() -> void:
 			"value": value_label,
 			"button": button,
 		})
+
+func set_tutorial_highlight(active: bool) -> void:
+	if _tutorial_outline != null:
+		_tutorial_outline.visible = active
+
+func get_tutorial_focus_rect() -> Rect2:
+	if _panel == null:
+		return Rect2()
+	return Rect2(_panel.position - Vector2(8.0, 8.0), _panel.size + Vector2(16.0, 16.0))
+
+func get_card_screen_position(card_index: int) -> Vector2:
+	if card_index < 0 or card_index >= _slot_nodes.size():
+		return Vector2.ZERO
+	var slot: Dictionary = _slot_nodes[card_index]
+	var panel: Panel = slot.get("panel") as Panel
+	if panel == null or not panel.visible:
+		return Vector2.ZERO
+	return panel.global_position + panel.size * 0.5
 
 func _on_card_pressed(card_index: int) -> void:
 	if turn_manager == null:
@@ -283,8 +310,8 @@ func _update_card_motes() -> void:
 			var blink: float = 0.5 + 0.5 * sin(phase)
 			var flash: float = smoothstep(0.38, 0.96, blink)
 			var sway_x: float = sin(phase * 1.3) * 5.0
-			var rise: float = fmod(_fx_time * (16.0 + float(mote_index) * 1.8), 28.0)
-			mote.position = Vector2(9.0 + float(mote_index) * 12.0 + sway_x, 78.0 - rise)
+			var rise: float = fmod(_fx_time * (18.0 + float(mote_index) * 1.8), 34.0)
+			mote.position = Vector2(12.0 + float(mote_index) * 14.0 + sway_x, 90.0 - rise)
 			mote.color = Color(base_color.r, base_color.g, base_color.b, 0.25 + flash * 0.95)
 
 func _card_color(color_name: String) -> Color:
@@ -297,10 +324,14 @@ func _card_color(color_name: String) -> Color:
 			return Color(0.84, 0.22, 0.22, 0.96)
 		"purple":
 			return Color(0.58, 0.30, 0.88, 0.96)
+		"gold":
+			return Color(0.94, 0.74, 0.22, 0.98)
 		_:
 			return Color(0.30, 0.30, 0.36, 0.96)
 
 func _card_name(card: Dictionary) -> String:
+	if card.has("label"):
+		return str(card.get("label", "?"))
 	match str(card.get("type", "")):
 		"essence":
 			return "ES"
@@ -314,6 +345,8 @@ func _card_name(card: Dictionary) -> String:
 			return "?"
 
 func _card_icon(card: Dictionary) -> String:
+	if card.has("icon"):
+		return str(card.get("icon", "?"))
 	match str(card.get("type", "")):
 		"essence":
 			return "^"

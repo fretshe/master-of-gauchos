@@ -19,6 +19,7 @@ const C_MOUNTAIN   := Color(0.50, 0.50, 0.50, 1.00)
 const C_FOREST     := Color(0.10, 0.38, 0.10, 1.00)
 const C_DESERT     := Color(0.78, 0.72, 0.38, 1.00)
 const C_VOLCANO    := Color(0.60, 0.14, 0.04, 1.00)
+const C_CORDILLERA := Color(0.20, 0.22, 0.26, 1.00)
 const C_TOWER_NEU  := Color(0.70, 0.70, 0.70, 1.00)
 const C_P1         := Color(0.15, 0.40, 0.85, 1.00)
 const C_P2         := Color(0.85, 0.18, 0.18, 1.00)
@@ -32,6 +33,7 @@ const TERRAIN_MM_COLORS: Array = [
 	Color(0.10, 0.38, 0.10),   # FOREST
 	Color(0.78, 0.72, 0.38),   # DESERT
 	Color(0.60, 0.14, 0.04),   # VOLCANO
+	Color(0.20, 0.22, 0.26),   # CORDILLERA
 ]
 
 # ─── Godot callbacks ──────────────────────────────────────────────────────────────

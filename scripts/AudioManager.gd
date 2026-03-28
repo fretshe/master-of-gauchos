@@ -9,6 +9,7 @@ var sfx_walk_02 = preload("res://assets/audio/sfx/movement/walk_02.mp3")
 var sfx_button  = preload("res://assets/audio/sfx/ui/button.mp3")
 var sfx_capture = preload("res://assets/audio/sfx/ui/tower_capture.mp3")
 var sfx_essence = preload("res://assets/audio/sfx/ui/essence_gain.mp3")
+var sfx_level_up = preload("res://assets/audio/sfx/ui/level_up.mp3")
 var sfx_summon  = preload("res://assets/audio/sfx/ui/summon.mp3")
 var sfx_card_essence = preload("res://assets/audio/sfx/cards/card_essence.mp3")
 var sfx_card_heal    = preload("res://assets/audio/sfx/cards/card_heal.mp3")
@@ -23,6 +24,10 @@ var _player:        AudioStreamPlayer   # procedural synthesis (death, level-up,
 var _sfx_player:    AudioStreamPlayer   # MP3 one-shot SFX
 var _master_volume: float = 0.70
 var _walk_toggle:   bool  = false
+var _muted:         bool  = false
+var _menu_button_sfx: AudioStream = null
+
+const MENU_BUTTON_SFX_PATH := "res://assets/audio/sfx/ui/menu_button.mp3"
 
 # ─── Lifecycle ───────────────────────────────────────────────────────────────────
 func _ready() -> void:
@@ -30,10 +35,25 @@ func _ready() -> void:
 	add_child(_player)
 	_sfx_player = AudioStreamPlayer.new()
 	add_child(_sfx_player)
+	_menu_button_sfx = _load_menu_button_sfx()
 
 # ─── Public API ─────────────────────────────────────────────────────────────────
 func set_volume(value: float) -> void:
 	_master_volume = clampf(value, 0.0, 1.0)
+	if _player != null:
+		_player.volume_db = _target_volume_db()
+	if _sfx_player != null:
+		_sfx_player.volume_db = _target_volume_db()
+
+func set_muted(value: bool) -> void:
+	_muted = value
+	if _player != null:
+		_player.volume_db = _target_volume_db()
+	if _sfx_player != null:
+		_sfx_player.volume_db = _target_volume_db()
+
+func is_muted() -> bool:
+	return _muted
 
 ## sword_hit for WARRIOR / MASTER, arrow_hit for ARCHER, lance_hit for LANCER / RIDER.
 func play_attack(unit_type: int = -1) -> void:
@@ -61,6 +81,10 @@ func play_essence() -> void:
 func play_button() -> void:
 	_play_sfx(sfx_button)
 
+## Main menu / new game menu button click.
+func play_menu_button() -> void:
+	_play_sfx(_menu_button_sfx if _menu_button_sfx != null else sfx_button)
+
 ## Descending pitch slide — unit defeated.
 func play_death() -> void:
 	var buf:    PackedVector2Array = PackedVector2Array()
@@ -78,6 +102,9 @@ func play_death() -> void:
 
 ## Rising pentatonic run ending on a sustained note — level up.
 func play_level_up() -> void:
+	if sfx_level_up != null:
+		_play_sfx(sfx_level_up)
+		return
 	var buf: PackedVector2Array = PackedVector2Array()
 	_append_sine(buf, 261.63, 0.06, 0.26)
 	_append_sine(buf, 329.63, 0.06, 0.26)
@@ -111,8 +138,15 @@ func play_card(card_type: String) -> void:
 # ─── Helpers ─────────────────────────────────────────────────────────────────────
 func _play_sfx(stream: AudioStream) -> void:
 	_sfx_player.stream    = stream
-	_sfx_player.volume_db = linear_to_db(_master_volume)
+	_sfx_player.volume_db = _target_volume_db()
 	_sfx_player.play()
+
+func _load_menu_button_sfx() -> AudioStream:
+	if ResourceLoader.exists(MENU_BUTTON_SFX_PATH):
+		var stream := load(MENU_BUTTON_SFX_PATH) as AudioStream
+		if stream != null:
+			return stream
+	return sfx_button
 
 # ─── Waveform helpers ────────────────────────────────────────────────────────────
 func _append_sine(buf: PackedVector2Array, freq: float, dur: float, vol: float) -> void:
@@ -135,3 +169,6 @@ func _emit(buf: PackedVector2Array) -> void:
 	var pb: AudioStreamGeneratorPlayback = _player.get_stream_playback()
 	if pb != null:
 		pb.push_buffer(buf)
+
+func _target_volume_db() -> float:
+	return -80.0 if _muted or _master_volume <= 0.001 else linear_to_db(_master_volume)

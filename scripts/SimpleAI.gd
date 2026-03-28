@@ -8,11 +8,19 @@ var resource_manager = null
 var summon_manager = null
 var hud = null
 
+const AI_TURN_START_DELAY := 1.05
+const AI_POST_CARD_DELAY := 0.55
+const AI_POST_SUMMON_DELAY := 0.55
+const AI_PRE_ACTION_DELAY := 0.45
+const AI_POST_ACTION_DELAY := 0.55
+const AI_BETWEEN_UNITS_DELAY := 0.75
+const AI_TURN_END_DELAY := 0.95
+
 func play_turn(player_id: int) -> void:
 	if hex_grid == null or resource_manager == null or summon_manager == null:
 		return
 
-	await _wait(0.7)
+	await _wait(AI_TURN_START_DELAY)
 	await _try_play_best_card(player_id)
 	await _try_summon(player_id)
 
@@ -27,9 +35,9 @@ func play_turn(player_id: int) -> void:
 		var acted: bool = await _play_unit_turn(unit)
 		if not acted:
 			break
-		await _wait(0.2)
+		await _wait(AI_BETWEEN_UNITS_DELAY)
 
-	await _wait(0.4)
+	await _wait(AI_TURN_END_DELAY)
 
 func _choose_next_unit(player_id: int) -> Unit:
 	var units: Array[Unit] = hex_grid.get_units_for_player(player_id)
@@ -61,7 +69,9 @@ func _play_unit_turn(unit: Unit) -> bool:
 	if not attack_cells.is_empty():
 		var target: Unit = _choose_attack_target(unit, attack_cells)
 		if target != null:
+			await _wait(AI_PRE_ACTION_DELAY)
 			await hex_grid.execute_ai_attack(unit, target)
+			await _wait(AI_POST_ACTION_DELAY)
 			return true
 
 	var move_cells: Array = options.get("move_cells", [])
@@ -72,7 +82,9 @@ func _play_unit_turn(unit: Unit) -> bool:
 	if move_target == Vector2i(-1, -1):
 		return false
 
+	await _wait(AI_PRE_ACTION_DELAY)
 	await hex_grid.execute_ai_move(unit, move_target)
+	await _wait(AI_POST_ACTION_DELAY)
 
 	if not is_instance_valid(unit) or unit.hp <= 0:
 		return true
@@ -82,7 +94,9 @@ func _play_unit_turn(unit: Unit) -> bool:
 	if not post_attacks.is_empty():
 		var target_after_move: Unit = _choose_attack_target(unit, post_attacks)
 		if target_after_move != null:
+			await _wait(AI_PRE_ACTION_DELAY)
 			await hex_grid.execute_ai_attack(unit, target_after_move)
+			await _wait(AI_POST_ACTION_DELAY)
 	return true
 
 func _choose_attack_target(attacker: Unit, attack_cells: Array) -> Unit:
@@ -168,7 +182,7 @@ func _try_summon(player_id: int) -> void:
 	if chosen_cell == Vector2i(-1, -1):
 		return
 	if summon_manager.summon(chosen_type, chosen_cell.x, chosen_cell.y, player_id):
-		await _wait(0.35)
+		await _wait(AI_POST_SUMMON_DELAY)
 
 func _try_play_best_card(player_id: int) -> void:
 	if CardManager.used_card_this_turn:
@@ -215,7 +229,7 @@ func _try_play_best_card(player_id: int) -> void:
 
 	var played: bool = CardManager.play_card(player_id, best_index, best_target)
 	if played:
-		await _wait(0.35)
+		await _wait(AI_POST_CARD_DELAY)
 
 func _choose_summon_cell(player_id: int, summon_cells: Array) -> Vector2i:
 	var best_cell := Vector2i(-1, -1)

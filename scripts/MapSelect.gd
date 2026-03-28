@@ -3,22 +3,22 @@ extends Control
 const MapGeneratorScript := preload("res://scripts/MapGenerator.gd")
 
 # ─── Map type data ────────────────────────────────────────────────────────────
-const MAP_TYPES:  Array[String] = ["plains", "mountains", "volcanic"]
-const MAP_NAMES:  Array[String] = ["Llanuras", "Montañas", "Volcánico"]
+const MAP_TYPES:  Array[String] = ["plains", "sierras", "precordillera"]
+const MAP_NAMES:  Array[String] = ["Llanuras", "Sierras", "Precordillera"]
 const MAP_DESCS:  Array[String] = [
-	"Praderas verdes\ny ríos cristalinos.\nIdeal para comenzar.",
-	"Cumbres nevadas\ny gargantas oscuras.\nTerreno equilibrado.",
-	"Lava y ceniza.\nDesierto implacable.\nSolo para expertos.",
+	"Campos abiertos\ny monte disperso.\nIdeal para comenzar.",
+	"Lomas, pasos\ny altura disputada.\nMovilidad con tension.",
+	"Suelo arido,\nsierras secas y cauces.\nInspirado en San Juan.",
 ]
 const MAP_ACCENT: Array[Color] = [
 	Color(0.22, 0.82, 0.34),
-	Color(0.62, 0.64, 0.84),
-	Color(0.94, 0.32, 0.08),
+	Color(0.66, 0.72, 0.78),
+	Color(0.92, 0.72, 0.34),
 ]
 const MAP_BG_COL: Array[Color] = [
 	Color(0.05, 0.16, 0.06, 0.95),
-	Color(0.10, 0.10, 0.20, 0.95),
-	Color(0.21, 0.05, 0.03, 0.95),
+	Color(0.10, 0.11, 0.14, 0.95),
+	Color(0.20, 0.14, 0.06, 0.95),
 ]
 
 # ─── Map size data ────────────────────────────────────────────────────────────
@@ -34,8 +34,9 @@ const TERRAIN_COLS: Array[Color] = [
 	Color(0.22, 0.52, 0.88),   # WATER
 	Color(0.52, 0.52, 0.52),   # MOUNTAIN
 	Color(0.13, 0.44, 0.13),   # FOREST
-	Color(0.90, 0.82, 0.44),   # DESERT
+	Color(0.76, 0.66, 0.34),   # DESERT
 	Color(0.74, 0.18, 0.05),   # VOLCANO
+	Color(0.20, 0.22, 0.26),   # CORDILLERA
 ]
 
 # ─── UI palette ───────────────────────────────────────────────────────────────

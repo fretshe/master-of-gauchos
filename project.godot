@@ -14,7 +14,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 [application]
 
-config/name="Master of Monsters"
+config/name="Summoners of the Andes"
 config/description="Turn-based hex strategy game"
 run/main_scene="res://scenes/TitleScreen.tscn"
 config/features=PackedStringArray("4.6", "Forward Plus")

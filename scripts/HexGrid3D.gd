@@ -7,6 +7,7 @@ const TowerScript          := preload("res://scripts/Tower.gd")
 const MasterScript         := preload("res://scripts/Master.gd")
 const TerrainShader        := preload("res://shaders/terrain.gdshader")
 const TowerShader          := preload("res://shaders/tower.gdshader")
+const CombatObstructionShader := preload("res://shaders/combat_obstruction.gdshader")
 const GrassBladeTexture    := preload("res://assets/sprites/tiles/grass_blade.png")
 const EssenceIconTexture   := preload("res://assets/sprites/ui/icon_essence.png")
 const GRASS_TILE_TEXTURES: Array[Texture2D] = [
@@ -21,15 +22,16 @@ var   COLS:     int   = 24
 var   ROWS:     int   = 16
 const HEX_SIZE: float = 1.0   # circumradius in world units
 
-enum Terrain { GRASS, WATER, MOUNTAIN, FOREST, DESERT, VOLCANO }
+enum Terrain { GRASS, WATER, MOUNTAIN, FOREST, DESERT, VOLCANO, CORDILLERA }
 
 const TERRAIN_COLORS: Dictionary = {
 	0: Color(0.44, 0.76, 0.33),   # GRASS
 	1: Color(0.20, 0.53, 0.87),   # WATER
 	2: Color(0.60, 0.60, 0.60),   # MOUNTAIN
 	3: Color(0.13, 0.45, 0.13),   # FOREST
-	4: Color(0.93, 0.85, 0.47),   # DESERT
+	4: Color(0.76, 0.66, 0.34),   # DESERT
 	5: Color(0.72, 0.18, 0.05),   # VOLCANO
+	6: Color(0.20, 0.22, 0.26),   # CORDILLERA
 }
 
 const TERRAIN_HEIGHTS: Dictionary = {
@@ -39,6 +41,7 @@ const TERRAIN_HEIGHTS: Dictionary = {
 	3: 0.26,   # FOREST
 	4: 0.10,   # DESERT
 	5: 0.44,   # VOLCANO
+	6: 0.82,   # CORDILLERA
 }
 
 const OWNER_COLORS: Dictionary = {
@@ -85,11 +88,14 @@ signal combat_resolved(attacker: Unit, defender: Unit, result: Dictionary)
 signal card_target_selected(card_index: int, target_unit: Unit)
 signal unit_hovered(unit: Unit)
 signal unit_hover_cleared()
+signal cell_hovered(cell: Vector2i)
+signal cell_hover_cleared()
 
 # ─── State ──────────────────────────────────────────────────────────────────────
 var current_player:  int = 1
 var combat_manager       = null
 var resource_manager     = null
+var camera_override: Camera3D = null
 
 var _map_terrain:    Array      = []
 var _tile_instances: Dictionary = {}   # Vector2i → MeshInstance3D
@@ -101,6 +107,7 @@ var _units:          Dictionary = {}   # Vector2i → Unit
 var _towers:         Dictionary = {}   # Vector2i → Tower
 var _tower_instances: Dictionary = {}  # Vector2i → Node3D
 var _team_rings:      Dictionary = {}  # Vector2i → MeshInstance3D
+var _pending_tower_captures: Dictionary = {}  # Vector2i -> player_id
 
 var _selected_cell:     Vector2i = Vector2i(-1, -1)
 var _selected_unit:     Unit     = null
@@ -112,6 +119,9 @@ var _hovered_unit: Unit = null
 
 var _highlighted_cells: Array[Vector2i] = []   # external/placement highlights
 var _range_cells:       Array[Vector2i] = []   # internal selection/move/attack highlights
+var _tutorial_ring: Node3D = null
+var _tutorial_ring_material: StandardMaterial3D = null
+var _tutorial_ring_cell: Vector2i = Vector2i(-1, -1)
 
 var _animating: bool = false
 var _is_night_visuals: bool = false
@@ -192,7 +202,7 @@ func world_to_hex(world_pos: Vector3) -> Vector2i:
 				best = Vector2i(c, r)
 	return best
 
-func place_unit(unit: Unit, col: int, row: int) -> void:
+func place_unit(unit: Unit, col: int, row: int, defer_tower_capture: bool = false) -> void:
 	var cell:      Vector2i = Vector2i(col, row)
 	var world_pos: Vector3  = hex_to_world(col, row)
 	var terrain:   int      = _map_terrain[row][col] as int
@@ -213,6 +223,10 @@ func place_unit(unit: Unit, col: int, row: int) -> void:
 	unit.set_hex_cell(cell)
 	_add_team_ring(cell, unit.owner_id)
 	_update_team_ring_state(cell, unit)
+	if defer_tower_capture:
+		var tower: Tower = _towers.get(cell, null)
+		if tower != null and tower.owner_id != unit.owner_id:
+			_pending_tower_captures[cell] = unit.owner_id
 
 func get_unit_at(col: int, row: int) -> Unit:
 	return _units.get(Vector2i(col, row), null)
@@ -222,6 +236,66 @@ func get_all_units() -> Array:
 
 func get_all_towers() -> Array:
 	return _towers.values()
+
+func get_terrain_at(col: int, row: int) -> int:
+	if row < 0 or row >= _map_terrain.size():
+		return -1
+	var terrain_row: Array = _map_terrain[row] as Array
+	if col < 0 or col >= terrain_row.size():
+		return -1
+	return int(terrain_row[col])
+
+func get_tower_at(col: int, row: int) -> Tower:
+	return _towers.get(Vector2i(col, row), null)
+
+func resolve_end_turn_tower_captures(player_id: int) -> void:
+	var pending_cells: Array[Vector2i] = []
+	for cell_value: Variant in _pending_tower_captures.keys():
+		var cell: Vector2i = cell_value as Vector2i
+		if int(_pending_tower_captures.get(cell, 0)) == player_id:
+			pending_cells.append(cell)
+	for cell: Vector2i in pending_cells:
+		_pending_tower_captures.erase(cell)
+		var unit: Unit = _units.get(cell, null)
+		var tower: Tower = _towers.get(cell, null)
+		if unit == null or tower == null:
+			continue
+		if unit.owner_id != player_id or tower.owner_id == unit.owner_id:
+			continue
+		var capture_bonus: int = tower.capture(unit.owner_id)
+		if resource_manager != null and capture_bonus > 0:
+			resource_manager.add_essence(unit.owner_id, capture_bonus)
+		_update_tower_visual(cell)
+		emit_signal("tower_captured", tower.tower_name, unit.owner_id)
+		AudioManager.play_capture()
+		if capture_bonus > 0:
+			AudioManager.play_essence()
+
+func heal_units_on_owned_towers(player_id: int, amount: int = 1) -> int:
+	var healed_count: int = 0
+	for cell_value: Variant in _towers.keys():
+		var cell: Vector2i = cell_value as Vector2i
+		var tower: Tower = _towers.get(cell, null)
+		if tower == null or tower.owner_id != player_id:
+			continue
+		var unit: Unit = _units.get(cell, null)
+		if unit == null or unit.owner_id != player_id:
+			continue
+		if unit.hp >= unit.max_hp:
+			continue
+		unit.hp = mini(unit.max_hp, unit.hp + amount)
+		var renderer: Node3D = _unit_renderers.get(cell, null)
+		if renderer != null and renderer.has_method("set_health_bar_values"):
+			renderer.call("set_health_bar_values", unit.hp, unit.max_hp, true)
+		VFXManager.show_world_text_label(
+			_get_unit_world_anchor(cell),
+			"Curacion +%d" % amount,
+			Color(0.28, 1.0, 0.36, 1.0),
+			46,
+			1.55
+		)
+		healed_count += 1
+	return healed_count
 
 func get_units_for_player(player_id: int) -> Array[Unit]:
 	var result: Array[Unit] = []
@@ -238,7 +312,7 @@ func get_valid_summon_cells(player_id: int) -> Array[Vector2i]:
 		return result
 	for nb_value: Variant in _get_neighbors(master_cell.x, master_cell.y):
 		var nb: Vector2i = nb_value as Vector2i
-		if get_unit_at(nb.x, nb.y) == null:
+		if _is_valid_summon_cell(nb):
 			result.append(nb)
 	return result
 
@@ -304,6 +378,9 @@ func remove_units_for_player(player_id: int) -> void:
 
 func get_selected_unit() -> Unit:
 	return _selected_unit
+
+func is_attack_target_cell(cell: Vector2i) -> bool:
+	return cell in _attack_cells
 
 func get_selected_cell() -> Vector2i:
 	return _selected_cell
@@ -430,6 +507,32 @@ func clear_highlights() -> void:
 			_set_highlight(cell, false)
 	_highlighted_cells.clear()
 
+func set_tutorial_focus_cell(cell: Vector2i) -> void:
+	if not _tile_materials.has(cell):
+		clear_tutorial_focus_cell()
+		return
+	if _tutorial_ring_cell == cell and _tutorial_ring != null:
+		if cell not in _highlighted_cells:
+			_highlighted_cells.append(cell)
+		_set_highlight(cell, true, "tutorial")
+		return
+	clear_tutorial_focus_cell()
+	_tutorial_ring_cell = cell
+	_ensure_tutorial_focus_ring()
+	_update_tutorial_focus_ring()
+	_tutorial_ring.visible = true
+	_set_highlight(cell, true, "tutorial")
+	if cell not in _highlighted_cells:
+		_highlighted_cells.append(cell)
+
+func clear_tutorial_focus_cell() -> void:
+	if _tutorial_ring_cell != Vector2i(-1, -1):
+		_set_highlight(_tutorial_ring_cell, false)
+		_highlighted_cells.erase(_tutorial_ring_cell)
+	_tutorial_ring_cell = Vector2i(-1, -1)
+	if _tutorial_ring != null:
+		_tutorial_ring.visible = false
+
 func _card_target_color() -> Color:
 	match _card_target_type:
 		"heal":
@@ -449,6 +552,114 @@ func queue_redraw() -> void:
 func setup_units() -> void:
 	_place_masters()
 
+func serialize_state() -> Dictionary:
+	var units: Array[Dictionary] = []
+	for cell_value: Variant in _units.keys():
+		var cell: Vector2i = cell_value as Vector2i
+		var unit: Unit = _units.get(cell, null)
+		if unit == null:
+			continue
+		var unit_data: Dictionary = {
+			"cell": cell,
+			"unit_name": unit.unit_name,
+			"unit_type": unit.unit_type,
+			"owner_id": unit.owner_id,
+			"level": unit.level,
+			"experience": unit.experience,
+			"hp": unit.hp,
+			"max_hp": unit.max_hp,
+			"move_range": unit.move_range,
+			"attack_range": unit.attack_range,
+			"moved": unit.moved,
+			"has_attacked": unit.has_attacked,
+			"is_master": unit is Master,
+		}
+		if unit is Master:
+			unit_data["free_summon_used"] = bool((unit as Master).free_summon_used)
+		units.append(unit_data)
+
+	var towers: Array[Dictionary] = []
+	for cell_value: Variant in _towers.keys():
+		var cell: Vector2i = cell_value as Vector2i
+		var tower: Tower = _towers.get(cell, null)
+		if tower == null:
+			continue
+		towers.append({
+			"cell": cell,
+			"tower_name": tower.tower_name,
+			"owner_id": tower.owner_id,
+			"income": tower.income,
+		})
+
+	return {
+		"units": units,
+		"towers": towers,
+		"pending_tower_captures": _pending_tower_captures.duplicate(true),
+		"current_player": current_player,
+	}
+
+func restore_saved_state(state: Dictionary) -> void:
+	_clear_saved_units()
+	_restore_saved_towers(state.get("towers", []))
+	_pending_tower_captures = (state.get("pending_tower_captures", {}) as Dictionary).duplicate(true)
+	current_player = int(state.get("current_player", 1))
+
+	for unit_value: Variant in state.get("units", []):
+		if not (unit_value is Dictionary):
+			continue
+		_restore_saved_unit(unit_value as Dictionary)
+
+	_deselect()
+	_clear_range_highlights()
+	clear_highlights()
+
+func _clear_saved_units() -> void:
+	for renderer_value: Variant in _unit_renderers.values():
+		var renderer: Node3D = renderer_value as Node3D
+		if renderer != null:
+			renderer.queue_free()
+	_unit_renderers.clear()
+	_units.clear()
+	for ring_value: Variant in _team_rings.values():
+		var ring: MeshInstance3D = ring_value as MeshInstance3D
+		if ring != null:
+			ring.queue_free()
+	_team_rings.clear()
+
+func _restore_saved_towers(saved_towers: Array) -> void:
+	for tower_value: Variant in saved_towers:
+		if not (tower_value is Dictionary):
+			continue
+		var tower_data: Dictionary = tower_value as Dictionary
+		var cell: Vector2i = tower_data.get("cell", Vector2i(-1, -1))
+		var tower: Tower = _towers.get(cell, null)
+		if tower == null:
+			continue
+		tower.tower_name = str(tower_data.get("tower_name", tower.tower_name))
+		tower.owner_id = int(tower_data.get("owner_id", tower.owner_id))
+		tower.income = int(tower_data.get("income", tower.income))
+		_update_tower_visual(cell)
+
+func _restore_saved_unit(unit_data: Dictionary) -> void:
+	var cell: Vector2i = unit_data.get("cell", Vector2i(-1, -1))
+	if cell == Vector2i(-1, -1):
+		return
+	var unit: Unit = Master.new() if bool(unit_data.get("is_master", false)) else Unit.new()
+	unit.unit_name = str(unit_data.get("unit_name", "Unidad"))
+	unit.unit_type = int(unit_data.get("unit_type", Unit.UnitType.WARRIOR))
+	unit.owner_id = int(unit_data.get("owner_id", 1))
+	unit.level = int(unit_data.get("level", Unit.Level.BRONZE))
+	unit.experience = int(unit_data.get("experience", 0))
+	unit.max_hp = int(unit_data.get("max_hp", 1))
+	unit.hp = int(unit_data.get("hp", unit.max_hp))
+	unit.move_range = int(unit_data.get("move_range", 3))
+	unit.attack_range = unit.get_default_attack_range()
+	unit.moved = bool(unit_data.get("moved", false))
+	unit.has_attacked = bool(unit_data.get("has_attacked", false))
+	if unit is Master:
+		(unit as Master).free_summon_used = bool(unit_data.get("free_summon_used", false))
+	place_unit(unit, cell.x, cell.y, false)
+
 
 func get_hex_cell_data(col: int, row: int) -> HexCell3D:
 	if col < 0 or col >= COLS or row < 0 or row >= ROWS:
@@ -464,7 +675,7 @@ func start_combat(units_in_combat: Array, camera: Camera3D = null) -> void:
 	if _combat_wall_system == null:
 		return
 	if camera == null:
-		camera = get_viewport().get_camera_3d()
+		camera = camera_override if camera_override != null else get_viewport().get_camera_3d()
 	_combat_wall_system.start_combat(units_in_combat, camera)
 
 
@@ -548,10 +759,16 @@ func _set_highlight(cell: Vector2i, on: bool, mode: String = "select") -> void:
 			"card_heal", "card_damage", "card_exp":
 				mat.set_shader_parameter("albedo_color",   TERRAIN_COLORS.get(terrain, Color.WHITE))
 				mat.set_shader_parameter("emission_color", _card_target_color())
+			"tutorial":
+				mat.set_shader_parameter("albedo_color",   TERRAIN_COLORS.get(terrain, Color.WHITE))
+				mat.set_shader_parameter("emission_color", Color(1.0, 0.82, 0.18, 1.0))
 			_:
 				mat.set_shader_parameter("albedo_color",   TERRAIN_COLORS.get(terrain, Color.WHITE))
 				mat.set_shader_parameter("emission_color", Color(0.68, 0.52, 0.08))
-		mat.set_shader_parameter("emission_strength", 0.0 if mode == "move" or mode == "summon" else 0.95)
+		var emission_strength: float = 0.0 if mode == "move" or mode == "summon" else 0.95
+		if mode == "tutorial":
+			emission_strength = 1.35
+		mat.set_shader_parameter("emission_strength", emission_strength)
 		mat.set_shader_parameter("dim_factor", 1.0)
 	else:
 		mat.set_shader_parameter("albedo_color",      TERRAIN_COLORS.get(terrain, Color.WHITE))
@@ -569,21 +786,46 @@ func _set_selection_focus(active: bool) -> void:
 		if mat != null:
 			mat.set_shader_parameter("dim_factor", dim_factor)
 
+func _clear_matchup_indicators() -> void:
+	for renderer_value: Variant in _unit_renderers.values():
+		var renderer: Node3D = renderer_value as Node3D
+		if renderer != null and renderer.has_method("set_matchup_indicator"):
+			renderer.call("set_matchup_indicator", 0)
+
+func _refresh_matchup_indicators() -> void:
+	_clear_matchup_indicators()
+	if _selected_unit == null:
+		return
+	for cell: Vector2i in _attack_cells:
+		var target: Unit = _units.get(cell, null)
+		var renderer: Node3D = _unit_renderers.get(cell)
+		if target == null or renderer == null or not renderer.has_method("set_matchup_indicator"):
+			continue
+		var mult: float = Unit.get_damage_multiplier(_selected_unit.unit_type, target.unit_type)
+		var state: int = 0
+		if mult > 1.0:
+			state = 1
+		elif mult < 1.0:
+			state = -1
+		renderer.call("set_matchup_indicator", state)
+
 func _show_placement_hints() -> void:
+	_clear_matchup_indicators()
 	clear_highlights()
 	if _placement_master_cell == Vector2i(-1, -1):
 		return
 	for nb: Vector2i in _get_neighbors(_placement_master_cell.x, _placement_master_cell.y):
-		if get_unit_at(nb.x, nb.y) == null:
+		if _is_valid_summon_cell(nb):
 			_set_highlight(nb, true, "summon")
 			_highlighted_cells.append(nb)
 
 func _show_master_placement_hints() -> void:
+	_clear_matchup_indicators()
 	clear_highlights()
 	if _master_placement_cell == Vector2i(-1, -1):
 		return
 	for nb: Vector2i in _get_neighbors(_master_placement_cell.x, _master_placement_cell.y):
-		if get_unit_at(nb.x, nb.y) == null:
+		if _is_valid_summon_cell(nb):
 			_set_highlight(nb, true, "summon")
 			_highlighted_cells.append(nb)
 
@@ -612,16 +854,13 @@ func _compute_highlights(col: int, row: int, unit: Unit) -> void:
 
 		for nb: Vector2i in _get_neighbors(current.x, current.y):
 			var terrain: int = _map_terrain[nb.y][nb.x]
-			if terrain == Terrain.WATER:
+			if terrain == Terrain.WATER or terrain == Terrain.CORDILLERA:
 				continue
 			var step:     int = 2 if (terrain == Terrain.MOUNTAIN or terrain == Terrain.FOREST) else 1
 			var new_cost: int = cost + step
 			var nb_unit:  Unit = _units.get(nb, null)
 
-			if nb_unit != null:
-				if nb_unit.owner_id != unit.owner_id and nb not in _attack_cells:
-					_attack_cells.append(nb)
-			else:
+			if nb_unit == null:
 				if new_cost <= moves_left and (not visited.has(nb) or visited[nb] > new_cost):
 					visited[nb] = new_cost
 					if nb not in _move_cells:
@@ -638,8 +877,8 @@ func _compute_highlights(col: int, row: int, unit: Unit) -> void:
 			if nb not in _attack_cells:
 				_attack_cells.append(nb)
 
-	# Ranged attack (Archer: distance 2)
-	if unit.attack_range >= 2:
+	# Ranged attack (Archer/Master only): distance 2
+	if unit.can_attack_at_distance(2):
 		for c2: int in range(COLS):
 			for r2: int in range(ROWS):
 				var target: Vector2i = Vector2i(c2, r2)
@@ -653,6 +892,14 @@ func _compute_highlights(col: int, row: int, unit: Unit) -> void:
 func _unit_has_actions(col: int, row: int, unit: Unit) -> bool:
 	_compute_highlights(col, row, unit)
 	return not _move_cells.is_empty() or not _attack_cells.is_empty()
+
+func _is_valid_summon_cell(cell: Vector2i) -> bool:
+	if cell == Vector2i(-1, -1):
+		return false
+	if get_unit_at(cell.x, cell.y) != null:
+		return false
+	var terrain: int = _map_terrain[cell.y][cell.x]
+	return terrain != Terrain.WATER and terrain != Terrain.CORDILLERA
 
 # ─── Godot callbacks ─────────────────────────────────────────────────────────────
 func _ready() -> void:
@@ -681,9 +928,10 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _process(_delta: float) -> void:
 	_update_grass_wind()
+	_update_tutorial_focus_ring()
 
 func _screen_to_cell(screen_pos: Vector2) -> Vector2i:
-	var cam: Camera3D = get_viewport().get_camera_3d()
+	var cam: Camera3D = camera_override if camera_override != null else get_viewport().get_camera_3d()
 	if cam == null:
 		return Vector2i(-1, -1)
 	var origin: Vector3 = cam.project_ray_origin(screen_pos)
@@ -704,6 +952,10 @@ func _handle_hover(screen_pos: Vector2) -> void:
 	if cell == _hovered_cell:
 		return
 	_hovered_cell = cell
+	if cell != Vector2i(-1, -1):
+		emit_signal("cell_hovered", cell)
+	else:
+		emit_signal("cell_hover_cleared")
 	var hovered_unit: Unit = null
 	if cell != Vector2i(-1, -1):
 		hovered_unit = _units.get(cell, null)
@@ -711,6 +963,9 @@ func _handle_hover(screen_pos: Vector2) -> void:
 		return
 	_hovered_unit = hovered_unit
 	if hovered_unit != null:
+		if _selected_unit != null and hovered_unit.owner_id != _selected_unit.owner_id and cell in _attack_cells:
+			var mult: float = Unit.get_damage_multiplier(_selected_unit.unit_type, hovered_unit.unit_type)
+			emit_signal("enemy_inspected", hovered_unit, mult)
 		emit_signal("unit_hovered", hovered_unit)
 	else:
 		emit_signal("unit_hover_cleared")
@@ -735,7 +990,7 @@ func _handle_click(screen_pos: Vector2) -> void:
 	if _master_placement_mode:
 		if _master_placement_cell != Vector2i(-1, -1):
 			var adj: Array = _get_neighbors(_master_placement_cell.x, _master_placement_cell.y)
-			if cell in adj and get_unit_at(cell.x, cell.y) == null:
+			if cell in adj and _is_valid_summon_cell(cell):
 				emit_signal("master_placement_confirmed", cell.x, cell.y,
 						_placement_type, _placement_player)
 				exit_master_placement_mode()
@@ -745,7 +1000,7 @@ func _handle_click(screen_pos: Vector2) -> void:
 	if _placement_mode:
 		if _placement_master_cell != Vector2i(-1, -1):
 			var adj: Array = _get_neighbors(_placement_master_cell.x, _placement_master_cell.y)
-			if cell in adj and get_unit_at(cell.x, cell.y) == null:
+			if cell in adj and _is_valid_summon_cell(cell):
 				emit_signal("placement_confirmed", cell.x, cell.y,
 						_placement_type, _placement_player)
 				exit_placement_mode()
@@ -765,6 +1020,7 @@ func _handle_click(screen_pos: Vector2) -> void:
 				_selected_cell = cell
 				_selected_unit = unit
 				_apply_selection_highlights()
+				_refresh_matchup_indicators()
 			else:
 				_clear_range_highlights()
 				_selected_cell = Vector2i(-1, -1)
@@ -809,6 +1065,7 @@ func _handle_click(screen_pos: Vector2) -> void:
 			_selected_cell = cell
 			_selected_unit = other
 			_apply_selection_highlights()
+			_refresh_matchup_indicators()
 		else:
 			_selected_cell = Vector2i(-1, -1)
 			_selected_unit = null
@@ -823,6 +1080,7 @@ func _handle_click(screen_pos: Vector2) -> void:
 # ─── Actions ─────────────────────────────────────────────────────────────────────
 func _move_unit(from: Vector2i, to: Vector2i) -> void:
 	_animating = true
+	_clear_matchup_indicators()
 	_clear_range_highlights()
 
 	var unit: Unit = _units[from]
@@ -860,10 +1118,14 @@ func _move_unit(from: Vector2i, to: Vector2i) -> void:
 	# Tower capture
 	var tower: Tower = _towers.get(to, null)
 	if tower != null and tower.owner_id != unit.owner_id:
-		tower.capture(unit.owner_id)
+		var capture_bonus: int = tower.capture(unit.owner_id)
+		if resource_manager != null and capture_bonus > 0:
+			resource_manager.add_essence(unit.owner_id, capture_bonus)
 		_update_tower_visual(to)
 		emit_signal("tower_captured", tower.tower_name, unit.owner_id)
 		AudioManager.play_capture()
+		if capture_bonus > 0:
+			AudioManager.play_essence()
 		print("[HexGrid3D] J%d capturó una torre en (%d,%d)" % [unit.owner_id, to.x, to.y])
 
 	print("[HexGrid3D] %s movido a (%d,%d) | movimientos restantes: %d" % [
@@ -883,6 +1145,7 @@ func _move_unit(from: Vector2i, to: Vector2i) -> void:
 			_selected_renderer.call("set_selected", false)
 	else:
 		_apply_selection_highlights()
+		_refresh_matchup_indicators()
 	emit_signal("unit_selected", unit)
 	_animating = false
 
@@ -892,27 +1155,32 @@ func _initiate_combat(attacker_cell: Vector2i, defender_cell: Vector2i) -> void:
 		return
 
 	_animating = true
+	_clear_matchup_indicators()
 	_clear_range_highlights()
 
 	var attacker: Unit = _units[attacker_cell]
 	var defender: Unit = _units[defender_cell]
-	var is_ranged: bool = attacker.attack_range >= 2 and \
+	var attacker_terrain: int = _map_terrain[attacker_cell.y][attacker_cell.x] as int
+	var defender_terrain: int = _map_terrain[defender_cell.y][defender_cell.x] as int
+	var is_ranged: bool = attacker.can_attack_at_distance(_hex_distance(attacker_cell, defender_cell)) and \
 			_hex_distance(attacker_cell, defender_cell) > 1
 
 	attacker.exhaust()
 	_update_team_ring_state(attacker_cell, attacker)
 
 	# ── Build visual context for cinematic combat ──────────────────────────────
-	var cam: Camera3D = get_viewport().get_camera_3d()
+	var cam: Camera3D = camera_override if camera_override != null else get_viewport().get_camera_3d()
 	var atk_renderer: Node3D = _unit_renderers.get(attacker_cell)
 	var def_renderer: Node3D = _unit_renderers.get(defender_cell)
 
 	var visual_context: Dictionary = {
 		"camera":            cam if (cam != null and cam.has_method("enter_combat_mode")) else null,
-		"attacker_pos":      hex_to_world(attacker_cell.x, attacker_cell.y),
-		"defender_pos":      hex_to_world(defender_cell.x, defender_cell.y),
+		"attacker_pos":      _get_unit_world_anchor(attacker_cell),
+		"defender_pos":      _get_unit_world_anchor(defender_cell),
 		"attacker_cell":     attacker_cell,
 		"defender_cell":     defender_cell,
+		"attacker_terrain":  attacker_terrain,
+		"defender_terrain":  defender_terrain,
 		"attacker_renderer": atk_renderer,
 		"defender_renderer": def_renderer,
 		"all_renderers":     _unit_renderers.values(),
@@ -967,7 +1235,17 @@ func _initiate_combat(attacker_cell: Vector2i, defender_cell: Vector2i) -> void:
 	_animating = false
 	_deselect()
 
+func _get_unit_world_anchor(cell: Vector2i) -> Vector3:
+	var base_pos: Vector3 = hex_to_world(cell.x, cell.y)
+	var terrain: int = _map_terrain[cell.y][cell.x] as int
+	base_pos.y = TERRAIN_HEIGHTS.get(terrain, 0.12)
+	var renderer: Node3D = _unit_renderers.get(cell, null)
+	if renderer != null:
+		base_pos.y = renderer.position.y
+	return base_pos
+
 func _deselect() -> void:
+	_clear_matchup_indicators()
 	if _selected_renderer != null:
 		_selected_renderer.call("set_selected", false)
 		_selected_renderer = null
@@ -997,7 +1275,7 @@ func _exit_card_target_mode() -> void:
 
 # ─── Grid construction ────────────────────────────────────────────────────────────
 func _build_meshes() -> void:
-	for t: int in range(6):
+	for t: int in range(TERRAIN_HEIGHTS.size()):
 		var h:   float        = TERRAIN_HEIGHTS.get(t, 0.12)
 		var cyl: CylinderMesh = CylinderMesh.new()
 		cyl.top_radius      = HEX_SIZE * 0.96
@@ -1021,6 +1299,10 @@ func _build_grid() -> void:
 			mat.set_shader_parameter("albedo_texture", _get_grass_tile_texture(col, row) if terrain == Terrain.GRASS else null)
 			mat.set_shader_parameter("texture_tint_strength", 1.0)
 			mat.set_shader_parameter("texture_brightness", 1.55 if terrain == Terrain.GRASS else 1.0)
+			mat.set_shader_parameter("deco_strength", 0.22)
+			mat.set_shader_parameter("pixel_density", 22.0)
+			mat.set_shader_parameter("patch_pixel_size", 6.0)
+			mat.set_shader_parameter("light_bands", 3.0)
 			mat.set_shader_parameter("emission_color",  Color.BLACK)
 			mat.set_shader_parameter("emission_strength", 0.0)
 			mat.set_shader_parameter("dim_factor", 1.0)
@@ -1237,8 +1519,10 @@ func _build_underboard_base() -> void:
 # ─── Tower placement ──────────────────────────────────────────────────────────────
 func _place_towers() -> void:
 	var positions: Array
+	var incomes: Array = []
 	if GameData.map_tower_positions.size() > 0:
 		positions = GameData.map_tower_positions
+		incomes = GameData.map_tower_incomes
 	else:
 		positions = [
 			Vector2i(4, 4),  Vector2i(4, 11),
@@ -1251,7 +1535,7 @@ func _place_towers() -> void:
 		var tower: Tower    = TowerScript.new()
 		tower.tower_name = "Torre %d" % (i + 1)
 		tower.owner_id   = 0
-		tower.income     = 2
+		tower.income     = int(incomes[i]) if i < incomes.size() else 2
 		tower.position   = pos
 		_towers[pos]     = tower
 		_spawn_tower_3d(pos, tower)
@@ -1268,9 +1552,9 @@ func _spawn_tower_3d(cell: Vector2i, tower: Tower) -> void:
 	add_child(tower_root)
 
 	var tower_materials: Array[ShaderMaterial] = [
-		_create_tower_material(Color(0.70, 0.70, 0.72, 1.0), tower.owner_id, 0.10, 0.22),
-		_create_tower_material(Color(0.58, 0.60, 0.64, 1.0), tower.owner_id, 0.16, 0.26),
-		_create_tower_material(Color(0.92, 0.92, 0.96, 1.0), tower.owner_id, 0.04, 0.12),
+		_create_tower_material(Color(0.70, 0.70, 0.72, 1.0), tower.owner_id, 0.62, 0.34),
+		_create_tower_material(Color(0.58, 0.60, 0.64, 1.0), tower.owner_id, 0.72, 0.40),
+		_create_tower_material(Color(0.92, 0.92, 0.96, 1.0), tower.owner_id, 0.46, 0.22),
 	]
 	tower_root.set_meta("tower_materials", tower_materials)
 
@@ -1301,8 +1585,9 @@ func _spawn_tower_3d(cell: Vector2i, tower: Tower) -> void:
 
 	# Income label
 	var income_root := Node3D.new()
-	income_root.position = tower_pos + Vector3(0.0, 0.85, 0.0)
+	income_root.position = tower_pos + Vector3(0.0, 1.30, 0.0)
 	add_child(income_root)
+	tower_root.set_meta("income_root", income_root)
 
 	var icon := Sprite3D.new()
 	icon.texture = EssenceIconTexture
@@ -1312,6 +1597,7 @@ func _spawn_tower_3d(cell: Vector2i, tower: Tower) -> void:
 	icon.modulate = C_GOLD
 	icon.position = Vector3(-0.12, 0.0, 0.0)
 	income_root.add_child(icon)
+	tower_root.set_meta("income_icon", icon)
 
 	var lbl: Label3D = Label3D.new()
 	lbl.text = "+%d" % tower.income
@@ -1319,7 +1605,9 @@ func _spawn_tower_3d(cell: Vector2i, tower: Tower) -> void:
 	lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	lbl.modulate = C_GOLD
 	lbl.position = Vector3(0.05, 0.0, 0.0)
+	GameData.apply_selected_font_to_label3d(lbl)
 	income_root.add_child(lbl)
+	tower_root.set_meta("income_label", lbl)
 
 func _update_tower_visual(cell: Vector2i) -> void:
 	var tower: Tower = _towers.get(cell)
@@ -1333,6 +1621,17 @@ func _update_tower_visual(cell: Vector2i) -> void:
 		var mat: ShaderMaterial = material_value as ShaderMaterial
 		if mat != null:
 			_configure_tower_material(mat, tower.owner_id)
+
+func play_tower_income_feedback(player_id: int) -> void:
+	for cell_value: Variant in _towers.keys():
+		var cell: Vector2i = cell_value as Vector2i
+		var tower: Tower = _towers.get(cell) as Tower
+		if tower == null or tower.owner_id != player_id:
+			continue
+		var tower_root: Node3D = _tower_instances.get(cell) as Node3D
+		if tower_root == null:
+			continue
+		_animate_tower_income_feedback(tower_root, tower)
 
 func apply_time_of_day_visuals(is_night: bool, moon_strength: float) -> void:
 	_is_night_visuals = is_night
@@ -1364,6 +1663,10 @@ func set_combat_tower_obstruction_fade(active: bool, focus_mid: Vector3 = Vector
 			var tower_root: Node3D = tower_root_value as Node3D
 			if tower_root != null:
 				_set_tower_root_opacity(tower_root, 1.0)
+		for renderer_value: Variant in _unit_renderers.values():
+			var renderer: Node3D = renderer_value as Node3D
+			if renderer != null and renderer.has_method("set_combat_obstruction_opacity"):
+				renderer.call("set_combat_obstruction_opacity", 1.0)
 		return
 
 	for tower_root_value: Variant in _tower_instances.values():
@@ -1379,6 +1682,19 @@ func set_combat_tower_obstruction_fade(active: bool, focus_mid: Vector3 = Vector
 			opacity = 0.18
 		_set_tower_root_opacity(tower_root, opacity)
 
+	for renderer_value: Variant in _unit_renderers.values():
+		var renderer: Node3D = renderer_value as Node3D
+		if renderer == null or not renderer.has_method("set_combat_obstruction_opacity"):
+			continue
+		var unit_pos: Vector3 = renderer.global_position
+		var segment_distance: float = _point_to_segment_distance_xz(unit_pos, camera_pos, focus_mid)
+		var toward_focus: float = (focus_mid - camera_pos).length()
+		var toward_unit: float = (unit_pos - camera_pos).length()
+		var opacity: float = 1.0
+		if segment_distance < 0.34 and toward_unit < toward_focus - 0.06:
+			opacity = 0.20
+		renderer.call("set_combat_obstruction_opacity", opacity)
+
 func set_combat_team_rings_visible(visible: bool) -> void:
 	for ring_value: Variant in _team_rings.values():
 		var ring: MeshInstance3D = ring_value as MeshInstance3D
@@ -1386,6 +1702,9 @@ func set_combat_team_rings_visible(visible: bool) -> void:
 			ring.visible = visible
 
 func show_combat_stage(attacker_cell: Vector2i, defender_cell: Vector2i, _camera_pos: Vector3 = Vector3.ZERO) -> void:
+	var parent_node: Node = get_parent()
+	if parent_node != null and parent_node.has_method("set_combat_cinematic_ui"):
+		parent_node.call("set_combat_cinematic_ui", true, [attacker_cell, defender_cell])
 	var units_in_combat: Array[Unit] = []
 	var attacker: Unit = _units.get(attacker_cell)
 	var defender: Unit = _units.get(defender_cell)
@@ -1393,10 +1712,49 @@ func show_combat_stage(attacker_cell: Vector2i, defender_cell: Vector2i, _camera
 		units_in_combat.append(attacker)
 	if defender != null:
 		units_in_combat.append(defender)
-	start_combat(units_in_combat, get_viewport().get_camera_3d())
+	start_combat(units_in_combat, camera_override if camera_override != null else get_viewport().get_camera_3d())
 
 func hide_combat_stage(immediate: bool = false) -> void:
+	var parent_node: Node = get_parent()
+	if parent_node != null and parent_node.has_method("set_combat_cinematic_ui"):
+		parent_node.call("set_combat_cinematic_ui", false, [])
 	end_combat()
+
+func set_combat_board_theater(active: bool, focus_cells: Array = []) -> void:
+	var focus_lookup: Dictionary = {}
+	for cell_value: Variant in focus_cells:
+		if cell_value is Vector2i:
+			focus_lookup[cell_value] = true
+
+	var default_dim: float = TILE_DIM_FACTOR_FOCUSED if _selection_focus_active else 1.0
+	var board_dim: float = 0.52 if active else default_dim
+	for cell_value: Variant in _tile_materials.keys():
+		var cell: Vector2i = cell_value as Vector2i
+		var mat: ShaderMaterial = _tile_materials.get(cell, null) as ShaderMaterial
+		if mat == null:
+			continue
+		var tile_dim: float = board_dim
+		if focus_lookup.has(cell):
+			tile_dim = 1.0
+		elif active:
+			for focus_value: Variant in focus_lookup.keys():
+				var focus_cell: Vector2i = focus_value as Vector2i
+				var dist: int = _hex_distance(cell, focus_cell)
+				if dist <= 1:
+					tile_dim = maxf(tile_dim, 0.86)
+					break
+				elif dist <= 2:
+					tile_dim = maxf(tile_dim, 0.68)
+		mat.set_shader_parameter("dim_factor", tile_dim)
+
+	for tower_root_value: Variant in _tower_instances.values():
+		var tower_root: Node3D = tower_root_value as Node3D
+		if tower_root == null:
+			continue
+		_set_tower_root_opacity(tower_root, 0.58 if active else 1.0)
+
+	if _grass_deco_container != null:
+		_grass_deco_container.visible = true
 
 func _add_combat_stage_side(root: Node3D, offset: Vector3, terrain: int) -> void:
 	var stage_color: Color = TERRAIN_COLORS.get(terrain, Color(0.44, 0.76, 0.33)).darkened(0.08)
@@ -1426,10 +1784,10 @@ func _create_combat_stage_piece(size: Vector3, local_pos: Vector3, color: Color,
 	mat.albedo_color = Color(color.r, color.g, color.b, alpha)
 	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
-	mat.roughness = 0.88
+	mat.roughness = 1.0
 	mat.emission_enabled = true
 	mat.emission = color.darkened(0.10)
-	mat.emission_energy_multiplier = 0.18
+	mat.emission_energy_multiplier = 0.05
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	piece.mesh = mesh
 	piece.material_override = mat
@@ -1456,7 +1814,8 @@ func _configure_tile_material(mat: ShaderMaterial, terrain: int) -> void:
 	if _is_night_visuals:
 		mat.set_shader_parameter("shadow_threshold", 0.40)
 		mat.set_shader_parameter("highlight_threshold", 0.84)
-		mat.set_shader_parameter("band_smoothness", 0.028)
+		mat.set_shader_parameter("band_smoothness", 0.012)
+		mat.set_shader_parameter("light_bands", 3.0)
 		mat.set_shader_parameter("shadow_tint", Vector3(0.26, 0.30, 0.40))
 		mat.set_shader_parameter("mid_tint", Vector3(0.70, 0.74, 0.84))
 		mat.set_shader_parameter("highlight_tint", Vector3(0.96, 1.00, 1.06))
@@ -1466,7 +1825,8 @@ func _configure_tile_material(mat: ShaderMaterial, terrain: int) -> void:
 
 	mat.set_shader_parameter("shadow_threshold", 0.28)
 	mat.set_shader_parameter("highlight_threshold", 0.72)
-	mat.set_shader_parameter("band_smoothness", 0.04)
+	mat.set_shader_parameter("band_smoothness", 0.016)
+	mat.set_shader_parameter("light_bands", 3.0)
 	mat.set_shader_parameter("shadow_tint", Vector3(0.52, 0.52, 0.60))
 	mat.set_shader_parameter("mid_tint", Vector3(0.82, 0.82, 0.88))
 	mat.set_shader_parameter("highlight_tint", Vector3(1.08, 1.08, 1.00))
@@ -1503,10 +1863,11 @@ func _configure_tower_material(mat: ShaderMaterial, owner_id: int) -> void:
 	mat.set_shader_parameter("emission_color", owner_color)
 	mat.set_shader_parameter("opacity", opacity)
 	if _is_night_visuals:
-		mat.set_shader_parameter("emission_strength", emission_strength + 0.18)
+		mat.set_shader_parameter("emission_strength", emission_strength + 0.30)
 		mat.set_shader_parameter("shadow_threshold", 0.38)
 		mat.set_shader_parameter("highlight_threshold", 0.78)
-		mat.set_shader_parameter("band_smoothness", 0.028)
+		mat.set_shader_parameter("band_smoothness", 0.012)
+		mat.set_shader_parameter("light_bands", 3.0)
 		mat.set_shader_parameter("shadow_tint", Vector3(0.24, 0.28, 0.38))
 		mat.set_shader_parameter("mid_tint", Vector3(0.72, 0.76, 0.88))
 		mat.set_shader_parameter("highlight_tint", Vector3(1.02, 1.06, 1.14))
@@ -1514,24 +1875,146 @@ func _configure_tower_material(mat: ShaderMaterial, owner_id: int) -> void:
 		mat.set_shader_parameter("night_glow_strength", 0.16 + _moon_visual_strength * 0.18)
 		return
 
-	mat.set_shader_parameter("emission_strength", emission_strength)
+	mat.set_shader_parameter("emission_strength", emission_strength + (0.10 if owner_id != 0 else 0.0))
 	mat.set_shader_parameter("shadow_threshold", 0.24)
 	mat.set_shader_parameter("highlight_threshold", 0.68)
-	mat.set_shader_parameter("band_smoothness", 0.04)
+	mat.set_shader_parameter("band_smoothness", 0.016)
+	mat.set_shader_parameter("light_bands", 3.0)
 	mat.set_shader_parameter("shadow_tint", Vector3(0.46, 0.46, 0.54))
 	mat.set_shader_parameter("mid_tint", Vector3(0.82, 0.82, 0.88))
 	mat.set_shader_parameter("highlight_tint", Vector3(1.12, 1.12, 1.16))
 	mat.set_shader_parameter("night_glow_color", Color(0.24, 0.36, 0.62, 1.0))
 	mat.set_shader_parameter("night_glow_strength", 0.0)
 
-func _set_tower_root_opacity(tower_root: Node3D, opacity: float) -> void:
+func _animate_tower_income_feedback(tower_root: Node3D, tower: Tower) -> void:
 	var materials: Array = tower_root.get_meta("tower_materials", [])
+	var income_root: Node3D = tower_root.get_meta("income_root", null) as Node3D
+	var income_icon: Sprite3D = tower_root.get_meta("income_icon", null) as Sprite3D
+	var income_label: Label3D = tower_root.get_meta("income_label", null) as Label3D
+	var glow_color: Color = Color(0.42, 0.88, 1.0, 1.0)
+
 	for material_value: Variant in materials:
 		var mat: ShaderMaterial = material_value as ShaderMaterial
 		if mat == null:
 			continue
-		mat.set_meta("opacity", opacity)
-		mat.set_shader_parameter("opacity", opacity)
+		var base_emission: float = float(mat.get_shader_parameter("emission_strength"))
+		var base_emission_color: Color = mat.get_shader_parameter("emission_color") as Color
+		var tw := create_tween()
+		tw.tween_method(
+			func(v: float) -> void:
+				if is_instance_valid(mat):
+					mat.set_shader_parameter("emission_strength", v),
+			base_emission,
+			base_emission + 0.60,
+			0.16
+		)
+		tw.parallel().tween_method(
+			func(c: Color) -> void:
+				if is_instance_valid(mat):
+					mat.set_shader_parameter("emission_color", c),
+			base_emission_color,
+			glow_color,
+			0.16
+		)
+		tw.chain().tween_interval(0.12)
+		tw.tween_method(
+			func(v: float) -> void:
+				if is_instance_valid(mat):
+					mat.set_shader_parameter("emission_strength", v),
+			base_emission + 0.60,
+			base_emission,
+			0.26
+		)
+		tw.parallel().tween_method(
+			func(c: Color) -> void:
+				if is_instance_valid(mat):
+					mat.set_shader_parameter("emission_color", c),
+			glow_color,
+			base_emission_color,
+			0.26
+		)
+
+	if income_root != null:
+		var base_pos: Vector3 = income_root.position
+		var jump_tw := create_tween()
+		jump_tw.tween_property(income_root, "position", base_pos + Vector3(0.0, 0.14, 0.0), 0.14) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		jump_tw.tween_property(income_root, "position", base_pos, 0.22) \
+			.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+
+	if income_icon != null:
+		var icon_tw := create_tween()
+		icon_tw.tween_property(income_icon, "modulate", glow_color, 0.14)
+		icon_tw.tween_property(income_icon, "modulate", C_GOLD, 0.26)
+
+	if income_label != null:
+		var label_tw := create_tween()
+		label_tw.tween_property(income_label, "modulate", glow_color, 0.14)
+		label_tw.tween_property(income_label, "modulate", C_GOLD, 0.26)
+
+	VFXManager.show_world_text_label(
+		tower_root.global_position + Vector3(0.0, 1.50, 0.0),
+		"+%d ESENCIA" % tower.income,
+		glow_color,
+		34,
+		0.0
+	)
+
+func _set_tower_root_opacity(tower_root: Node3D, opacity: float) -> void:
+	var obstructed: bool = opacity < 0.999
+	for child: Node in tower_root.get_children():
+		var mesh_instance: MeshInstance3D = child as MeshInstance3D
+		if mesh_instance == null:
+			continue
+		_set_mesh_obstruction_material(mesh_instance, obstructed, opacity)
+
+
+func _set_mesh_obstruction_material(mesh_instance: MeshInstance3D, obstructed: bool, opacity: float) -> void:
+	if not obstructed:
+		var original_material: Material = mesh_instance.get_meta("combat_original_material", null) as Material
+		if original_material != null:
+			mesh_instance.material_override = original_material
+		return
+
+	if not mesh_instance.has_meta("combat_original_material"):
+		mesh_instance.set_meta("combat_original_material", mesh_instance.material_override)
+
+	var obstruction_material: ShaderMaterial = mesh_instance.get_meta("combat_obstruction_material", null) as ShaderMaterial
+	if obstruction_material == null:
+		obstruction_material = _create_combat_obstruction_material(mesh_instance)
+		mesh_instance.set_meta("combat_obstruction_material", obstruction_material)
+
+	obstruction_material.set_shader_parameter("opacity", opacity)
+	mesh_instance.material_override = obstruction_material
+
+
+func _create_combat_obstruction_material(mesh_instance: MeshInstance3D) -> ShaderMaterial:
+	var base_color: Color = Color(0.72, 0.78, 0.86, 1.0)
+	var edge_color: Color = Color(0.94, 0.98, 1.0, 1.0)
+	var original_material: Material = mesh_instance.material_override
+
+	if original_material is ShaderMaterial:
+		var shader_material: ShaderMaterial = original_material as ShaderMaterial
+		var shader_albedo: Variant = shader_material.get_shader_parameter("albedo_color")
+		var shader_emission: Variant = shader_material.get_shader_parameter("emission_color")
+		if shader_albedo is Color:
+			base_color = shader_albedo as Color
+		if shader_emission is Color:
+			edge_color = (shader_emission as Color).lerp(Color(1.0, 1.0, 1.0, 1.0), 0.35)
+	elif original_material is StandardMaterial3D:
+		var standard_material: StandardMaterial3D = original_material as StandardMaterial3D
+		base_color = standard_material.albedo_color
+		edge_color = standard_material.albedo_color.lerp(Color(1.0, 1.0, 1.0, 1.0), 0.35)
+
+	var obstruction_material := ShaderMaterial.new()
+	obstruction_material.shader = CombatObstructionShader
+	obstruction_material.set_shader_parameter("base_color", base_color)
+	obstruction_material.set_shader_parameter("edge_color", edge_color)
+	obstruction_material.set_shader_parameter("opacity", 0.18)
+	obstruction_material.set_shader_parameter("rim_strength", 1.8)
+	obstruction_material.set_shader_parameter("emission_strength", 0.35 if not _is_night_visuals else 0.55)
+	obstruction_material.set_shader_parameter("roughness_value", 0.84)
+	return obstruction_material
 
 func _point_to_segment_distance_xz(point: Vector3, a: Vector3, b: Vector3) -> float:
 	var p := Vector2(point.x, point.z)
@@ -1557,6 +2040,8 @@ func _terrain_night_glow_color(terrain: int) -> Color:
 			return Color(0.22, 0.26, 0.40, 1.0)
 		Terrain.VOLCANO:
 			return Color(0.26, 0.20, 0.30, 1.0)
+		Terrain.CORDILLERA:
+			return Color(0.16, 0.18, 0.24, 1.0)
 		_:
 			return Color(0.18, 0.28, 0.42, 1.0)
 
@@ -1573,6 +2058,8 @@ func _terrain_night_glow_strength(terrain: int) -> float:
 			base_strength = 0.025
 		Terrain.VOLCANO:
 			base_strength = 0.05
+		Terrain.CORDILLERA:
+			base_strength = 0.01
 		_:
 			base_strength = 0.04
 	return base_strength * _moon_visual_strength
@@ -1673,6 +2160,80 @@ func _move_team_ring(from: Vector2i, to: Vector2i) -> void:
 	var base_y: float = TERRAIN_HEIGHTS.get(terrain, 0.12)
 	var world_pos: Vector3 = hex_to_world(to.x, to.y)
 	ring.position = Vector3(world_pos.x, base_y + 0.03, world_pos.z)
+
+func _ensure_tutorial_focus_ring() -> void:
+	if _tutorial_ring != null:
+		return
+	_tutorial_ring_material = StandardMaterial3D.new()
+	_tutorial_ring_material.albedo_color = Color(1.0, 0.9, 0.32, 0.95)
+	_tutorial_ring_material.emission_enabled = true
+	_tutorial_ring_material.emission = Color(1.0, 0.86, 0.28, 1.0)
+	_tutorial_ring_material.emission_energy_multiplier = 1.85
+	_tutorial_ring_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_tutorial_ring_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_tutorial_ring_material.no_depth_test = true
+
+	_tutorial_ring = Node3D.new()
+	_tutorial_ring.visible = false
+	add_child(_tutorial_ring)
+
+	for side_index: int in range(6):
+		var marker_box := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(0.22, 0.03, 0.035)
+		marker_box.mesh = box
+		marker_box.material_override = _tutorial_ring_material
+		_tutorial_ring.add_child(marker_box)
+
+		var corner_box := MeshInstance3D.new()
+		var corner_mesh := BoxMesh.new()
+		corner_mesh.size = Vector3(0.12, 0.03, 0.035)
+		corner_box.mesh = corner_mesh
+		corner_box.material_override = _tutorial_ring_material
+		_tutorial_ring.add_child(corner_box)
+
+func _update_tutorial_focus_ring() -> void:
+	if _tutorial_ring == null or _tutorial_ring_material == null:
+		return
+	if _tutorial_ring_cell == Vector2i(-1, -1):
+		_tutorial_ring.visible = false
+		return
+	if not _tile_materials.has(_tutorial_ring_cell):
+		clear_tutorial_focus_cell()
+		return
+	var terrain: int = _map_terrain[_tutorial_ring_cell.y][_tutorial_ring_cell.x] as int
+	var base_y: float = TERRAIN_HEIGHTS.get(terrain, 0.12)
+	var world_pos: Vector3 = hex_to_world(_tutorial_ring_cell.x, _tutorial_ring_cell.y)
+	var tile: Node3D = _tile_instances.get(_tutorial_ring_cell) as Node3D
+	if tile == null:
+		return
+	var t: float = Time.get_ticks_msec() * 0.001
+	var pulse: float = 0.96 + 0.06 * (0.5 + 0.5 * sin(t * 3.4))
+	var bob: float = 0.05 + 0.015 * (0.5 + 0.5 * sin(t * 4.8))
+	var glow_pulse: float = 0.95 + 0.45 * (0.5 + 0.5 * sin(t * 3.9))
+	_tutorial_ring.visible = true
+	_tutorial_ring.position = Vector3(world_pos.x, base_y + bob, world_pos.z)
+	_tutorial_ring.rotation = Vector3.ZERO
+	_tutorial_ring.scale = Vector3.ONE * pulse
+	_tutorial_ring_material.albedo_color = Color(1.0, 0.9, 0.32, 0.75 + 0.18 * pulse)
+	_tutorial_ring_material.emission_energy_multiplier = 1.5 + pulse * 0.9
+	var tile_mat: ShaderMaterial = _tile_materials.get(_tutorial_ring_cell)
+	if tile_mat != null:
+		tile_mat.set_shader_parameter("emission_color", Color(1.0, 0.84, 0.20, 1.0))
+		tile_mat.set_shader_parameter("emission_strength", glow_pulse)
+		tile_mat.set_shader_parameter("dim_factor", 1.0)
+	for side_index: int in range(6):
+		var edge_marker: Node3D = tile.get_node_or_null("edge[%d]" % side_index) as Node3D
+		if edge_marker == null:
+			continue
+		var edge_piece: MeshInstance3D = _tutorial_ring.get_child(side_index * 2) as MeshInstance3D
+		var corner_piece: MeshInstance3D = _tutorial_ring.get_child(side_index * 2 + 1) as MeshInstance3D
+		if edge_piece != null:
+			edge_piece.global_transform = edge_marker.global_transform
+			edge_piece.position += edge_marker.global_transform.basis.z.normalized() * 0.06
+		if corner_piece != null:
+			corner_piece.global_transform = edge_marker.global_transform
+			corner_piece.position += edge_marker.global_transform.basis.x.normalized() * 0.22 + edge_marker.global_transform.basis.z.normalized() * 0.05
 
 # ─── Fallback terrain ─────────────────────────────────────────────────────────────
 func _fallback_terrain() -> void:

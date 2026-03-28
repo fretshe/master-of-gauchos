@@ -1,11 +1,24 @@
 extends CanvasLayer
 
+const MatchAdvantageScript := preload("res://scripts/MatchAdvantage.gd")
+const TutorialOutlineScript := preload("res://scripts/TutorialOutline.gd")
+const TutorialSpotlightShader := preload("res://shaders/tutorial_spotlight.gdshader")
+
 var turn_manager: Node = null
 var resource_manager: Node = null
 var hex_grid: Node = null
 
 signal end_turn_pressed()
 signal summon_pressed()
+signal pause_menu_toggled(open: bool)
+signal pause_resume_pressed()
+signal pause_save_pressed()
+signal pause_save_and_exit_pressed()
+signal pause_restart_pressed()
+signal pause_back_to_menu_pressed()
+signal pause_sound_toggled(enabled: bool)
+signal tutorial_skip_pressed()
+signal tutorial_next_pressed()
 
 const HUD_SIZE := Vector2(1280, 720)
 const LABEL_COLOR := Color(1.0, 1.0, 1.0, 1.0)
@@ -59,6 +72,13 @@ const CLASS_ICON_PATHS := {
 	3: "res://assets/sprites/ui/class_icons/rider_icon.png",
 }
 const MASTER_ICON_PATH := "res://assets/sprites/ui/class_icons/master_icon.png"
+const UNIT_TYPE_DISPLAY_NAMES := {
+	-1: "Maestro",
+	0: "Guerrero",
+	1: "Arquero",
+	2: "Lancero",
+	3: "Jinete",
+}
 const MINIMAP_TERRAIN_COLORS := [
 	Color(0.44, 0.76, 0.33, 1.0),
 	Color(0.22, 0.52, 0.88, 1.0),
@@ -66,9 +86,25 @@ const MINIMAP_TERRAIN_COLORS := [
 	Color(0.13, 0.44, 0.13, 1.0),
 	Color(0.84, 0.78, 0.42, 1.0),
 	Color(0.72, 0.18, 0.05, 1.0),
+	Color(0.20, 0.22, 0.26, 1.0),
 ]
+const TERRAIN_DISPLAY_NAMES := {
+	0: "Pasto",
+	1: "Agua",
+	2: "Montana",
+	3: "Bosque",
+	4: "Desierto",
+	5: "Volcan",
+	6: "Cordillera",
+}
+const COMBAT_HUD_ALPHA := 0.20
+const COMBAT_BAR_HEIGHT := 54.0
+const HUD_HP_SEGMENT_COLUMNS := 20
+const HUD_HP_SEGMENT_COUNT := 60
 
 var _root: Control
+var _cinematic_top_bar: ColorRect
+var _cinematic_bottom_bar: ColorRect
 var _turn_band_glow: ColorRect
 var _turn_band_core: ColorRect
 var _turn_band_glow_bottom: ColorRect
@@ -93,6 +129,7 @@ var _lbl_range_value: Label
 var _lbl_melee: Label
 var _lbl_ranged: Label
 var _lbl_advantage: Label
+var _lbl_advantage_detail: Label
 var _lbl_no_unit: Label
 var _melee_dice_container: Control
 var _ranged_dice_container: Control
@@ -105,6 +142,7 @@ var _end_turn_flame: Dictionary = {}
 var _summon_motes: Array[Dictionary] = []
 var _end_turn_motes: Array[Dictionary] = []
 var _btn_last_combat: Button
+var _btn_pause_menu: Button
 var _placement_banner: Panel
 var _lbl_placement: Label
 var _combat_panel: Panel
@@ -124,21 +162,95 @@ var _lbl_tw_income: Label
 var _last_combat_data: Dictionary = {}
 var _ui_fx_time: float = 0.0
 var _portrait_cache: Dictionary = {}
+var _pause_overlay: ColorRect
+var _pause_panel: Panel
+var _btn_pause_resume: Button
+var _btn_pause_save: Button
+var _btn_pause_save_exit: Button
+var _btn_pause_restart: Button
+var _btn_pause_sound: Button
+var _btn_pause_back_menu: Button
+var _pause_confirm_panel: Panel
+var _pause_confirm_label: Label
+var _btn_pause_confirm_yes: Button
+var _btn_pause_confirm_no: Button
+var _cell_context_panel: Panel
+var _lbl_cell_context_title: Label
+var _lbl_cell_context_body: Label
+var _tutorial_panel: Panel
+var _lbl_tutorial_step: Label
+var _lbl_tutorial_title: Label
+var _lbl_tutorial_body: Label
+var _btn_tutorial_skip: Button
+var _btn_tutorial_next: Button
+var _tutorial_panel_outline: TutorialOutline
+var _tutorial_summon_outline: TutorialOutline
+var _tutorial_end_turn_outline: TutorialOutline
+var _tutorial_resources_outline: TutorialOutline
+var _tutorial_advantage_outline: TutorialOutline
+var _tutorial_minimap_outline: TutorialOutline
+var _tutorial_unit_panel_outline: TutorialOutline
+var _tutorial_spotlight_layer: CanvasLayer
+var _tutorial_spotlight_rect: ColorRect
+var _tutorial_spotlight_mat: ShaderMaterial
+var _tutorial_overlay_layer: CanvasLayer
+var _tutorial_overlay_root: Control
+var _tutorial_custom_focus_rect: Rect2 = Rect2()
+var _tutorial_summon_arrow: Label
+var _tutorial_end_turn_arrow: Label
+var _tutorial_resources_arrow: Label
+var _tutorial_advantage_arrow: Label
+var _tutorial_minimap_arrow: Label
+var _tutorial_unit_panel_arrow: Label
+var _tutorial_cards_arrow: Label
+var _tutorial_master_arrow: Label
+var _tutorial_tower_arrow: Label
+var _tutorial_master_world: Vector3 = Vector3.ZERO
+var _tutorial_tower_world: Vector3 = Vector3.ZERO
+var _tutorial_show_master_arrow: bool = false
+var _tutorial_show_tower_arrow: bool = false
+var _audio_enabled: bool = true
+var _pause_confirm_action: String = ""
+var _tutorial_force_summon_glow: bool = false
+var _tutorial_force_end_turn_glow: bool = false
+var _advantage_tracker: MatchAdvantage = MatchAdvantageScript.new()
+var _advantage_title: Label
+var _advantage_status: Label
+var _advantage_bar_bg: ColorRect
+var _advantage_bar_fill_container: Control
+var _advantage_hover_area: Control
+var _advantage_rank_labels: Array[Label] = []
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	_build_root()
 	_build_background()
 	_build_style_overlays()
 	_build_top_left_stats()
 	_build_turn_display()
 	_build_last_combat_button()
+	_build_advantage_panel()
+	_build_pause_menu()
 	_build_minimap()
 	_build_unit_panel()
 	_build_summon_button()
 	_build_end_turn_button()
 	_build_placement_banner()
+	_build_cell_context_panel()
+	_build_tutorial_panel()
 	_build_combat_panel()
 	hide_unit()
+
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventKey and event.pressed and not event.echo):
+		return
+	if event.keycode != KEY_ESCAPE:
+		return
+	if is_pause_menu_open():
+		if _is_pause_confirm_open():
+			_close_pause_confirmation()
+		else:
+			emit_signal("pause_menu_toggled", false)
 
 func _player_color(player_id: int) -> Color:
 	match player_id:
@@ -159,12 +271,74 @@ func _process(delta: float) -> void:
 	_update_button_flame(_end_turn_flame, _btn_end_turn, END_TURN_READY_COLOR, _is_button_glow_enabled(_end_turn_glow))
 	_update_button_motes(_summon_motes, _btn_summon, SUMMON_READY_COLOR, _is_button_glow_enabled(_summon_glow))
 	_update_button_motes(_end_turn_motes, _btn_end_turn, END_TURN_READY_COLOR, _is_button_glow_enabled(_end_turn_glow))
+	_update_tutorial_arrows()
+
+func set_combat_cinematic(active: bool) -> void:
+	var target_alpha: float = 0.0 if active else 1.0
+	create_tween().tween_property(_root, "modulate:a", target_alpha, 0.24) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+
+	var target_height: float = COMBAT_BAR_HEIGHT if active else 0.0
+	var target_bar_alpha: float = 0.78 if active else 0.0
+
+	if _cinematic_top_bar != null:
+		var top_tw := create_tween().set_parallel(true)
+		top_tw.tween_property(_cinematic_top_bar, "size:y", target_height, 0.28) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		top_tw.tween_property(_cinematic_top_bar, "color:a", target_bar_alpha, 0.24) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+
+	if _cinematic_bottom_bar != null:
+		var bottom_y: float = HUD_SIZE.y - target_height
+		var bottom_tw := create_tween().set_parallel(true)
+		bottom_tw.tween_property(_cinematic_bottom_bar, "position:y", bottom_y, 0.28) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		bottom_tw.tween_property(_cinematic_bottom_bar, "size:y", target_height, 0.28) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		bottom_tw.tween_property(_cinematic_bottom_bar, "color:a", target_bar_alpha, 0.24) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 func _build_root() -> void:
 	_root = Control.new()
 	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_root)
+
+	_tutorial_spotlight_layer = CanvasLayer.new()
+	_tutorial_spotlight_layer.layer = 40
+	add_child(_tutorial_spotlight_layer)
+
+	_tutorial_spotlight_rect = ColorRect.new()
+	_tutorial_spotlight_rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_tutorial_spotlight_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tutorial_spotlight_rect.visible = false
+	_tutorial_spotlight_mat = ShaderMaterial.new()
+	_tutorial_spotlight_mat.shader = TutorialSpotlightShader
+	_tutorial_spotlight_rect.material = _tutorial_spotlight_mat
+	_tutorial_spotlight_layer.add_child(_tutorial_spotlight_rect)
+
+	_tutorial_overlay_layer = CanvasLayer.new()
+	_tutorial_overlay_layer.layer = 41
+	add_child(_tutorial_overlay_layer)
+
+	_tutorial_overlay_root = Control.new()
+	_tutorial_overlay_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_tutorial_overlay_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tutorial_overlay_layer.add_child(_tutorial_overlay_root)
+
+	_cinematic_top_bar = ColorRect.new()
+	_cinematic_top_bar.position = Vector2(0.0, 0.0)
+	_cinematic_top_bar.size = Vector2(HUD_SIZE.x, 0.0)
+	_cinematic_top_bar.color = Color(0.0, 0.0, 0.0, 0.0)
+	_cinematic_top_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_cinematic_top_bar)
+
+	_cinematic_bottom_bar = ColorRect.new()
+	_cinematic_bottom_bar.position = Vector2(0.0, HUD_SIZE.y)
+	_cinematic_bottom_bar.size = Vector2(HUD_SIZE.x, 0.0)
+	_cinematic_bottom_bar.color = Color(0.0, 0.0, 0.0, 0.0)
+	_cinematic_bottom_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_cinematic_bottom_bar)
 
 func _build_background() -> void:
 	var top_line := ColorRect.new()
@@ -225,8 +399,8 @@ func _build_style_overlays() -> void:
 	_root.add_child(_turn_band_core_bottom)
 
 	_add_glass_panel(Rect2(8, 8, 386, 44), HUD_GLASS_DARK)
-	_turn_panel_glow = _add_glass_panel(Rect2(500, 8, 126, 44), Color(PLAYER_ONE_COLOR.r, PLAYER_ONE_COLOR.g, PLAYER_ONE_COLOR.b, 0.16))
-	_add_glass_panel(Rect2(676, 8, 212, 44), HUD_GLASS_DARK)
+	_turn_panel_glow = _add_glass_panel(Rect2(8, 58, 126, 44), Color(PLAYER_ONE_COLOR.r, PLAYER_ONE_COLOR.g, PLAYER_ONE_COLOR.b, 0.16))
+	_add_glass_panel(Rect2(408, 8, 472, 44), Color(0.16, 0.18, 0.22, 0.58))
 	_add_glass_panel(Rect2(978, 8, 290, 182), Color(0.18, 0.20, 0.24, 0.52))
 	_add_glass_panel(Rect2(18, 506, 346, 194), Color(0.18, 0.20, 0.24, 0.58))
 	_add_glass_panel(Rect2(384, 640, 136, 54), HUD_GLASS_DARK)
@@ -245,8 +419,8 @@ func _add_glass_panel(rect: Rect2, color: Color) -> Panel:
 func _add_corner_lines() -> void:
 	for rect: Rect2 in [
 		Rect2(8, 8, 386, 44),
-		Rect2(500, 8, 126, 44),
-		Rect2(676, 8, 212, 44),
+		Rect2(8, 58, 126, 44),
+		Rect2(408, 8, 472, 44),
 		Rect2(978, 8, 290, 182),
 		Rect2(18, 506, 346, 194),
 		Rect2(384, 640, 136, 54),
@@ -328,19 +502,62 @@ func _add_stat_texture_icon(path: String, pos: Vector2, size: Vector2, modulate_
 	_root.add_child(icon)
 
 func _build_turn_display() -> void:
-	_lbl_turn_num = _make_label("1", Vector2(530, 12), HUD_FONT_SIZE_LARGE, Vector2(90, 0))
-	_lbl_turn_num.position = Vector2(530, 16)
+	_lbl_turn_num = _make_label("1", Vector2(34, 62), HUD_FONT_SIZE_LARGE, Vector2(74, 0))
+	_lbl_turn_num.position = Vector2(34, 66)
 	_lbl_turn_num.size = Vector2(66, 20)
 	_lbl_turn_num.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_make_label("TURNO", Vector2(529, 33), 11, Vector2(70, 12), LABEL_DIM)
+	_make_label("TURNO", Vector2(32, 84), 11, Vector2(76, 12), LABEL_DIM)
 
 func _build_last_combat_button() -> void:
 	_btn_last_combat = _make_button("Ultimo combate", Vector2(700, 12), Vector2(180, 20), HUD_FONT_SIZE_SMALL)
-	_btn_last_combat.position = Vector2(688, 14)
-	_btn_last_combat.size = Vector2(188, 32)
+	_btn_last_combat.position = Vector2(-400, -120)
+	_btn_last_combat.size = Vector2(1, 1)
 	_btn_last_combat.disabled = true
+	_btn_last_combat.visible = false
 	_btn_last_combat.pressed.connect(_toggle_combat_panel)
 	_btn_last_combat.pressed.connect(AudioManager.play_button)
+
+	_btn_pause_menu = _make_button("Menu", Vector2(890, 14), Vector2(76, 32), HUD_FONT_SIZE_SMALL)
+	_btn_pause_menu.tooltip_text = "Opciones de partida"
+	_btn_pause_menu.pressed.connect(_toggle_pause_menu)
+	_btn_pause_menu.pressed.connect(AudioManager.play_button)
+
+func _build_advantage_panel() -> void:
+	_advantage_title = _make_label("VENTAJA", Vector2(422, 14), 11, Vector2(90, 14), LABEL_DIM)
+	_advantage_status = _make_label("", Vector2(514, 14), HUD_FONT_SIZE_SMALL, Vector2(352, 16), LABEL_COLOR)
+	_advantage_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+
+	_advantage_hover_area = Control.new()
+	_advantage_hover_area.position = Vector2(408, 8)
+	_advantage_hover_area.size = Vector2(472, 58)
+	_advantage_hover_area.mouse_filter = Control.MOUSE_FILTER_STOP
+	_advantage_hover_area.mouse_entered.connect(func() -> void:
+		_set_advantage_details_visible(true)
+	)
+	_advantage_hover_area.mouse_exited.connect(func() -> void:
+		_set_advantage_details_visible(false)
+	)
+	_root.add_child(_advantage_hover_area)
+
+	_advantage_bar_bg = ColorRect.new()
+	_advantage_bar_bg.position = Vector2(422, 30)
+	_advantage_bar_bg.size = Vector2(444, 8)
+	_advantage_bar_bg.color = Color(1.0, 1.0, 1.0, 0.08)
+	_advantage_bar_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(_advantage_bar_bg)
+
+	_advantage_bar_fill_container = Control.new()
+	_advantage_bar_fill_container.position = _advantage_bar_bg.position
+	_advantage_bar_fill_container.size = _advantage_bar_bg.size
+	_advantage_bar_fill_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(_advantage_bar_fill_container)
+
+	for i: int in range(4):
+		var label := _make_label("", Vector2(422 + float(i % 2) * 222.0, 42 + float(i / 2) * 12.0), 11, Vector2(214, 12), LABEL_DIM)
+		_advantage_rank_labels.append(label)
+
+	_set_advantage_details_visible(false)
+	refresh_advantage()
 
 func _build_minimap() -> void:
 	_minimap_texture = Control.new()
@@ -418,12 +635,12 @@ func _build_unit_panel() -> void:
 	_make_label("ALC", Vector2(306, 568), 11, Vector2(30, 16), LABEL_DIM)
 	_lbl_range_value = _make_label("", Vector2(332, 566), HUD_FONT_SIZE, Vector2(24, 18), LABEL_COLOR)
 
-	_make_label("EXPERIENCIA", Vector2(138, 614), 11, Vector2(100, 16), LABEL_DIM)
-	_lbl_xp_value = _make_label("", Vector2(240, 612), HUD_FONT_SIZE, Vector2(90, 18), XP_ON)
+	_make_label("EXPERIENCIA", Vector2(138, 628), 11, Vector2(100, 16), LABEL_DIM)
+	_lbl_xp_value = _make_label("", Vector2(240, 626), HUD_FONT_SIZE, Vector2(90, 18), XP_ON)
 
-	for i: int in range(40):
-		var row: int = int(float(i) / 20.0)
-		var col: int = i % 20
+	for i: int in range(HUD_HP_SEGMENT_COUNT):
+		var row: int = int(float(i) / float(HUD_HP_SEGMENT_COLUMNS))
+		var col: int = i % HUD_HP_SEGMENT_COLUMNS
 		var hp_seg := Panel.new()
 		hp_seg.position = Vector2(140 + col * 10, 588 + row * 12)
 		hp_seg.size = Vector2(9, 10)
@@ -436,7 +653,7 @@ func _build_unit_panel() -> void:
 		var row: int = int(float(i) / 20.0)
 		var col: int = i % 20
 		var xp_seg := Panel.new()
-		xp_seg.position = Vector2(140 + col * 10, 636 + row * 12)
+		xp_seg.position = Vector2(140 + col * 10, 650 + row * 12)
 		xp_seg.size = Vector2(9, 8)
 		xp_seg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_apply_segment_style(xp_seg, SEGMENT_DISABLED)
@@ -444,21 +661,22 @@ func _build_unit_panel() -> void:
 		_xp_segments.append(xp_seg)
 
 	_melee_dice_container = Control.new()
-	_melee_dice_container.position = Vector2(54, 652)
+	_melee_dice_container.position = Vector2(54, 660)
 	_melee_dice_container.size = Vector2(84, 12)
 	_melee_dice_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(_melee_dice_container)
 
 	_ranged_dice_container = Control.new()
-	_ranged_dice_container.position = Vector2(54, 676)
+	_ranged_dice_container.position = Vector2(54, 682)
 	_ranged_dice_container.size = Vector2(84, 12)
 	_ranged_dice_container.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(_ranged_dice_container)
 
-	_lbl_melee = _make_label("M", Vector2(32, 648), HUD_FONT_SIZE, Vector2(20, 18))
-	_lbl_ranged = _make_label("R", Vector2(32, 672), HUD_FONT_SIZE, Vector2(20, 18))
-	_lbl_advantage = _make_label("", Vector2(138, 650), HUD_FONT_SIZE_SMALL, Vector2(200, 18))
-	_lbl_no_unit = _make_label("Selecciona una unidad", Vector2(138, 650), HUD_FONT_SIZE_SMALL, Vector2(200, 18), LABEL_DIM)
+	_lbl_melee = _make_label("M", Vector2(32, 656), HUD_FONT_SIZE, Vector2(20, 18))
+	_lbl_ranged = _make_label("R", Vector2(32, 680), HUD_FONT_SIZE, Vector2(20, 18))
+	_lbl_advantage = _make_label("", Vector2(138, 658), HUD_FONT_SIZE_SMALL, Vector2(206, 18))
+	_lbl_advantage_detail = _make_label("", Vector2(138, 676), 12, Vector2(206, 16), LABEL_DIM)
+	_lbl_no_unit = _make_label("Selecciona una unidad", Vector2(138, 660), HUD_FONT_SIZE_SMALL, Vector2(200, 18), LABEL_DIM)
 
 func _build_summon_button() -> void:
 	_summon_glow = _make_button_glow(Vector2(386, 640), Vector2(126, 54))
@@ -495,6 +713,92 @@ func _build_placement_banner() -> void:
 	_lbl_placement = _make_label("Modo invocacion: elige un hexagono vacio", Vector2(8, 5), HUD_FONT_SIZE_SMALL, Vector2(484, 0), LABEL_COLOR, _placement_banner)
 	_lbl_placement.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 
+func _build_cell_context_panel() -> void:
+	_cell_context_panel = Panel.new()
+	_cell_context_panel.position = Vector2(984, 192)
+	_cell_context_panel.size = Vector2(278, 52)
+	_cell_context_panel.visible = false
+	_apply_panel_style(_cell_context_panel, Color(0.16, 0.17, 0.20, 0.88))
+	_root.add_child(_cell_context_panel)
+
+	_lbl_cell_context_title = _make_label("", Vector2(10, 6), HUD_FONT_SIZE_SMALL, Vector2(258, 16), LABEL_COLOR, _cell_context_panel)
+	_lbl_cell_context_body = _make_label("", Vector2(10, 24), 12, Vector2(258, 18), LABEL_DIM, _cell_context_panel)
+
+func _build_tutorial_panel() -> void:
+	_tutorial_panel = Panel.new()
+	_tutorial_panel.position = Vector2(370, 92)
+	_tutorial_panel.size = Vector2(540, 108)
+	_tutorial_panel.visible = false
+	_tutorial_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_apply_panel_style(_tutorial_panel, Color(0.08, 0.08, 0.10, 0.94))
+	_root.add_child(_tutorial_panel)
+
+	_lbl_tutorial_step = _make_label("", Vector2(16, 10), 11, Vector2(120, 14), LABEL_DIM, _tutorial_panel)
+	_lbl_tutorial_title = _make_label("", Vector2(16, 28), HUD_FONT_SIZE_LARGE, Vector2(386, 20), LABEL_COLOR, _tutorial_panel)
+	_lbl_tutorial_body = _make_label("", Vector2(16, 54), HUD_FONT_SIZE_SMALL, Vector2(386, 38), LABEL_DIM, _tutorial_panel)
+	_lbl_tutorial_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
+	_btn_tutorial_skip = _make_button("Saltar tutorial", Vector2(402, 30), Vector2(120, 36), HUD_FONT_SIZE_SMALL)
+	_root.remove_child(_btn_tutorial_skip)
+	_tutorial_panel.add_child(_btn_tutorial_skip)
+	_btn_tutorial_skip.pressed.connect(func() -> void:
+		emit_signal("tutorial_skip_pressed")
+	)
+	_btn_tutorial_skip.pressed.connect(AudioManager.play_button)
+
+	_btn_tutorial_next = _make_button("Siguiente", Vector2(402, 68), Vector2(120, 28), HUD_FONT_SIZE_SMALL)
+	_root.remove_child(_btn_tutorial_next)
+	_tutorial_panel.add_child(_btn_tutorial_next)
+	_btn_tutorial_next.visible = false
+	_btn_tutorial_next.pressed.connect(func() -> void:
+		emit_signal("tutorial_next_pressed")
+	)
+	_btn_tutorial_next.pressed.connect(AudioManager.play_button)
+
+	_tutorial_panel_outline = TutorialOutlineScript.new()
+	_tutorial_panel_outline.position = Vector2.ZERO
+	_tutorial_panel_outline.size = _tutorial_panel.size
+	_tutorial_panel_outline.visible = false
+	_tutorial_panel.add_child(_tutorial_panel_outline)
+	_tutorial_panel.move_child(_tutorial_panel_outline, 0)
+
+	_tutorial_summon_outline = TutorialOutlineScript.new()
+	_tutorial_summon_outline.position = _btn_summon.position - Vector2(8, 8) if _btn_summon != null else Vector2.ZERO
+	_tutorial_summon_outline.size = _btn_summon.size + Vector2(16, 16) if _btn_summon != null else Vector2.ZERO
+	_tutorial_summon_outline.visible = false
+	_root.add_child(_tutorial_summon_outline)
+	_tutorial_summon_arrow = _make_tutorial_arrow()
+	_tutorial_overlay_root.add_child(_tutorial_summon_arrow)
+
+	_tutorial_end_turn_outline = TutorialOutlineScript.new()
+	_tutorial_end_turn_outline.position = _btn_end_turn.position - Vector2(8, 8) if _btn_end_turn != null else Vector2.ZERO
+	_tutorial_end_turn_outline.size = _btn_end_turn.size + Vector2(16, 16) if _btn_end_turn != null else Vector2.ZERO
+	_tutorial_end_turn_outline.visible = false
+	_root.add_child(_tutorial_end_turn_outline)
+	_tutorial_end_turn_arrow = _make_tutorial_arrow()
+	_tutorial_overlay_root.add_child(_tutorial_end_turn_arrow)
+
+	_tutorial_resources_arrow = _make_tutorial_arrow("▲")
+	_tutorial_overlay_root.add_child(_tutorial_resources_arrow)
+	_tutorial_advantage_arrow = _make_tutorial_arrow("▲")
+	_tutorial_overlay_root.add_child(_tutorial_advantage_arrow)
+	_tutorial_minimap_arrow = _make_tutorial_arrow("▲")
+	_tutorial_overlay_root.add_child(_tutorial_minimap_arrow)
+	_tutorial_unit_panel_arrow = _make_tutorial_arrow()
+	_tutorial_overlay_root.add_child(_tutorial_unit_panel_arrow)
+	_tutorial_cards_arrow = _make_tutorial_arrow()
+	_tutorial_overlay_root.add_child(_tutorial_cards_arrow)
+
+	_tutorial_master_arrow = _make_tutorial_arrow()
+	_tutorial_overlay_root.add_child(_tutorial_master_arrow)
+	_tutorial_tower_arrow = _make_tutorial_arrow()
+	_tutorial_overlay_root.add_child(_tutorial_tower_arrow)
+
+	_tutorial_resources_outline = _make_tutorial_region_outline(Rect2(8, 8, 386, 44))
+	_tutorial_advantage_outline = _make_tutorial_region_outline(Rect2(408, 8, 472, 44))
+	_tutorial_minimap_outline = _make_tutorial_region_outline(Rect2(978, 8, 290, 182))
+	_tutorial_unit_panel_outline = _make_tutorial_region_outline(Rect2(22, 506, 334, 188))
+
 func _build_combat_panel() -> void:
 	_combat_panel = Panel.new()
 	_combat_panel.position = Vector2(700, 38)
@@ -518,6 +822,97 @@ func _build_combat_panel() -> void:
 
 	_lbl_cb_result = _make_label("", Vector2(10, 206), HUD_FONT_SIZE_SMALL, Vector2(200, 0), LABEL_COLOR, _combat_panel)
 	_lbl_cb_result.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
+func _build_pause_menu() -> void:
+	_pause_overlay = ColorRect.new()
+	_pause_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_pause_overlay.color = Color(0.0, 0.0, 0.0, 0.58)
+	_pause_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_pause_overlay.visible = false
+	add_child(_pause_overlay)
+
+	_pause_panel = Panel.new()
+	_pause_panel.position = Vector2(470, 180)
+	_pause_panel.size = Vector2(340, 372)
+	_pause_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_apply_panel_style(_pause_panel, Color(0.06, 0.08, 0.12, 0.94))
+	_pause_overlay.add_child(_pause_panel)
+
+	var title := _make_label("OPCIONES", Vector2(0, 22), 24, Vector2(340, 24), SUMMON_READY_COLOR, _pause_panel)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var subtitle := _make_label("Ajustes de la partida actual", Vector2(0, 54), 11, Vector2(340, 16), LABEL_DIM, _pause_panel)
+	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+
+	_btn_pause_resume = _make_button("Reanudar", Vector2(96, 92), Vector2(148, 38), HUD_FONT_SIZE)
+	_root.remove_child(_btn_pause_resume)
+	_pause_panel.add_child(_btn_pause_resume)
+	_btn_pause_resume.pressed.connect(func() -> void:
+		emit_signal("pause_resume_pressed")
+	)
+	_btn_pause_resume.pressed.connect(AudioManager.play_button)
+
+	_btn_pause_save = _make_button("Guardar", Vector2(96, 138), Vector2(148, 38), HUD_FONT_SIZE)
+	_root.remove_child(_btn_pause_save)
+	_pause_panel.add_child(_btn_pause_save)
+	_btn_pause_save.pressed.connect(func() -> void:
+		emit_signal("pause_save_pressed")
+	)
+	_btn_pause_save.pressed.connect(AudioManager.play_button)
+
+	_btn_pause_save_exit = _make_button("Guardar y salir", Vector2(96, 184), Vector2(148, 38), HUD_FONT_SIZE_SMALL)
+	_root.remove_child(_btn_pause_save_exit)
+	_pause_panel.add_child(_btn_pause_save_exit)
+	_btn_pause_save_exit.pressed.connect(func() -> void:
+		_open_pause_confirmation("save_exit", "Deseas guardar la partida y salir al menu principal?")
+	)
+	_btn_pause_save_exit.pressed.connect(AudioManager.play_button)
+
+	_btn_pause_restart = _make_button("Reiniciar", Vector2(96, 230), Vector2(148, 38), HUD_FONT_SIZE)
+	_root.remove_child(_btn_pause_restart)
+	_pause_panel.add_child(_btn_pause_restart)
+	_btn_pause_restart.pressed.connect(func() -> void:
+		_open_pause_confirmation("restart", "Deseas reiniciar la partida?")
+	)
+	_btn_pause_restart.pressed.connect(AudioManager.play_button)
+
+	_btn_pause_sound = _make_button("", Vector2(96, 276), Vector2(148, 38), HUD_FONT_SIZE)
+	_root.remove_child(_btn_pause_sound)
+	_pause_panel.add_child(_btn_pause_sound)
+	_btn_pause_sound.pressed.connect(_on_pause_sound_pressed)
+
+	_btn_pause_back_menu = _make_button("Volver al menu", Vector2(96, 322), Vector2(148, 38), HUD_FONT_SIZE_SMALL)
+	_root.remove_child(_btn_pause_back_menu)
+	_pause_panel.add_child(_btn_pause_back_menu)
+	_btn_pause_back_menu.pressed.connect(func() -> void:
+		_open_pause_confirmation("menu", "Deseas volver al menu principal?")
+	)
+	_btn_pause_back_menu.pressed.connect(AudioManager.play_button)
+
+	_pause_confirm_panel = Panel.new()
+	_pause_confirm_panel.position = Vector2(28, 84)
+	_pause_confirm_panel.size = Vector2(284, 124)
+	_pause_confirm_panel.visible = false
+	_pause_confirm_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_apply_panel_style(_pause_confirm_panel, Color(0.04, 0.05, 0.08, 0.97))
+	_pause_panel.add_child(_pause_confirm_panel)
+
+	_pause_confirm_label = _make_label("", Vector2(18, 18), 14, Vector2(248, 32), LABEL_COLOR, _pause_confirm_panel)
+	_pause_confirm_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_pause_confirm_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+
+	_btn_pause_confirm_yes = _make_button("Si", Vector2(34, 74), Vector2(92, 34), HUD_FONT_SIZE_SMALL)
+	_root.remove_child(_btn_pause_confirm_yes)
+	_pause_confirm_panel.add_child(_btn_pause_confirm_yes)
+	_btn_pause_confirm_yes.pressed.connect(_confirm_pause_action)
+	_btn_pause_confirm_yes.pressed.connect(AudioManager.play_button)
+
+	_btn_pause_confirm_no = _make_button("No", Vector2(158, 74), Vector2(92, 34), HUD_FONT_SIZE_SMALL)
+	_root.remove_child(_btn_pause_confirm_no)
+	_pause_confirm_panel.add_child(_btn_pause_confirm_no)
+	_btn_pause_confirm_no.pressed.connect(_close_pause_confirmation)
+	_btn_pause_confirm_no.pressed.connect(AudioManager.play_button)
+
+	_refresh_pause_sound_button()
 
 func _make_label(
 		text: String,
@@ -581,6 +976,66 @@ func _make_button(text: String, pos: Vector2, size: Vector2, font_size: int = HU
 		button.add_theme_stylebox_override(style_name, style)
 	_root.add_child(button)
 	return button
+
+func set_pause_menu_open(open: bool) -> void:
+	if _pause_overlay == null:
+		return
+	_pause_overlay.visible = open
+	_pause_overlay.mouse_filter = Control.MOUSE_FILTER_STOP if open else Control.MOUSE_FILTER_IGNORE
+	if not open:
+		_close_pause_confirmation()
+	if _btn_pause_menu != null:
+		_btn_pause_menu.text = "Cerrar" if open else "Menu"
+
+func is_pause_menu_open() -> bool:
+	return _pause_overlay != null and _pause_overlay.visible
+
+func set_sound_enabled(enabled: bool) -> void:
+	_audio_enabled = enabled
+	_refresh_pause_sound_button()
+
+func _toggle_pause_menu() -> void:
+	var open: bool = not is_pause_menu_open()
+	set_pause_menu_open(open)
+	emit_signal("pause_menu_toggled", open)
+
+func _on_pause_sound_pressed() -> void:
+	_audio_enabled = not _audio_enabled
+	_refresh_pause_sound_button()
+	emit_signal("pause_sound_toggled", _audio_enabled)
+	if _audio_enabled:
+		AudioManager.play_button()
+
+func _refresh_pause_sound_button() -> void:
+	if _btn_pause_sound == null:
+		return
+	_btn_pause_sound.text = "Sonido: ON" if _audio_enabled else "Sonido: OFF"
+
+func _open_pause_confirmation(action: String, message: String) -> void:
+	_pause_confirm_action = action
+	if _pause_confirm_label != null:
+		_pause_confirm_label.text = message
+	if _pause_confirm_panel != null:
+		_pause_confirm_panel.visible = true
+
+func _close_pause_confirmation() -> void:
+	_pause_confirm_action = ""
+	if _pause_confirm_panel != null:
+		_pause_confirm_panel.visible = false
+
+func _confirm_pause_action() -> void:
+	var action: String = _pause_confirm_action
+	_close_pause_confirmation()
+	match action:
+		"save_exit":
+			emit_signal("pause_save_and_exit_pressed")
+		"restart":
+			emit_signal("pause_restart_pressed")
+		"menu":
+			emit_signal("pause_back_to_menu_pressed")
+
+func _is_pause_confirm_open() -> bool:
+	return _pause_confirm_panel != null and _pause_confirm_panel.visible
 
 func _make_button_glow(pos: Vector2, size: Vector2) -> ColorRect:
 	var glow := ColorRect.new()
@@ -714,6 +1169,7 @@ func update_essence(player_id: int, amount: int) -> void:
 		return
 	if player_id == turn_manager.current_player:
 		_lbl_essence.text = str(amount)
+	refresh_advantage()
 	_refresh_action_button_glow()
 
 func get_essence_label_screen_position() -> Vector2:
@@ -774,6 +1230,7 @@ func show_unit(unit: Unit) -> void:
 	_ranged_dice_container.modulate.a = atk_alpha
 
 	_redraw_minimap(unit)
+	refresh_advantage()
 	_refresh_action_button_glow()
 
 func hide_unit() -> void:
@@ -804,19 +1261,21 @@ func hide_unit() -> void:
 	_melee_dice_container.modulate.a  = 1.0
 	_ranged_dice_container.modulate.a = 1.0
 	_redraw_minimap()
+	refresh_advantage()
 	_refresh_action_button_glow()
 
 func _update_segment_row(segments: Array[Panel], value: int, max_value: int, on_color: Color, off_color: Color) -> void:
 	var capped_max: int = mini(max_value, segments.size())
 	var capped_value: int = mini(value, capped_max)
 	for i: int in range(segments.size()):
-		segments[i].visible = true
 		if i < capped_value:
+			segments[i].visible = true
 			_apply_segment_style(segments[i], on_color)
 		elif i < capped_max:
+			segments[i].visible = true
 			_apply_segment_style(segments[i], off_color)
 		else:
-			_apply_segment_style(segments[i], SEGMENT_DISABLED)
+			segments[i].visible = false
 
 func refresh_towers() -> void:
 	if hex_grid == null:
@@ -840,8 +1299,70 @@ func refresh_towers() -> void:
 		_lbl_tw_income.text = "Ingreso: +%d" % income
 		_lbl_towers.text = str(int(counts.get(player_id, 0)))
 		_lbl_unit_count.text = str(_count_units(player_id))
+	refresh_advantage()
 	_redraw_minimap()
 	_refresh_action_button_glow()
+
+func refresh_advantage() -> void:
+	if _advantage_tracker == null or hex_grid == null or resource_manager == null:
+		return
+
+	var rows: Array[Dictionary] = _advantage_tracker.get_sorted_rows(hex_grid, resource_manager)
+	_rebuild_advantage_bar(rows)
+
+	if _advantage_status != null:
+		_advantage_status.text = _advantage_tracker.get_status_text(hex_grid, resource_manager)
+
+	for i: int in range(_advantage_rank_labels.size()):
+		var label: Label = _advantage_rank_labels[i]
+		if label == null:
+			continue
+		if i >= rows.size():
+			label.text = ""
+			continue
+
+		var row: Dictionary = rows[i]
+		var player_id: int = int(row.get("player_id", 0))
+		var score: int = int(row.get("score", 0))
+		label.text = "#%d J%d  %d" % [i + 1, player_id, score]
+		label.add_theme_color_override("font_color", _player_color(player_id))
+
+func _set_advantage_details_visible(visible: bool) -> void:
+	for label: Label in _advantage_rank_labels:
+		if label != null:
+			label.visible = visible
+
+func _rebuild_advantage_bar(rows: Array[Dictionary]) -> void:
+	if _advantage_bar_fill_container == null or _advantage_bar_bg == null:
+		return
+
+	for child: Node in _advantage_bar_fill_container.get_children():
+		child.queue_free()
+
+	var total_score: int = 0
+	for row: Dictionary in rows:
+		total_score += maxi(0, int(row.get("score", 0)))
+	if total_score <= 0:
+		return
+
+	var x_offset: float = 0.0
+	for i: int in range(rows.size()):
+		var row: Dictionary = rows[i]
+		var player_id: int = int(row.get("player_id", 0))
+		var score: int = maxi(0, int(row.get("score", 0)))
+		var ratio: float = float(score) / float(total_score)
+		var width: float = _advantage_bar_bg.size.x * ratio
+		if i == rows.size() - 1:
+			width = _advantage_bar_bg.size.x - x_offset
+
+		var fill := ColorRect.new()
+		fill.position = Vector2(x_offset, 0.0)
+		fill.size = Vector2(width, _advantage_bar_bg.size.y)
+		var base_color: Color = _player_color(player_id)
+		fill.color = Color(base_color.r, base_color.g, base_color.b, 0.88)
+		fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_advantage_bar_fill_container.add_child(fill)
+		x_offset += width
 
 func _redraw_minimap(selected_unit: Unit = null) -> void:
 	if _minimap_texture == null or hex_grid == null:
@@ -860,8 +1381,8 @@ func _redraw_minimap(selected_unit: Unit = null) -> void:
 	var local_points: Array[PackedVector2Array] = []
 	var min_pt := Vector2(1e20, 1e20)
 	var max_pt := Vector2(-1e20, -1e20)
-	for c: int in range(cols):
-		for r: int in range(rows):
+	for r: int in range(rows):
+		for c: int in range(cols):
 			var points: PackedVector2Array = _minimap_hex_points(c, r, 1.0)
 			local_points.append(points)
 			for pt: Vector2 in points:
@@ -932,7 +1453,7 @@ func _minimap_hex_points(col: int, row: int, radius: float) -> PackedVector2Arra
 	var center: Vector2 = _minimap_hex_center(col, row, radius)
 	var points := PackedVector2Array()
 	for i: int in range(6):
-		var angle: float = deg_to_rad(60.0 * float(i))
+		var angle: float = deg_to_rad(60.0 * float(i) + 30.0)
 		points.append(center + Vector2(cos(angle), sin(angle)) * radius)
 	return points
 
@@ -1001,6 +1522,8 @@ func _get_class_icon_path(unit_type: int) -> String:
 	return CLASS_ICON_PATHS.get(unit_type, MASTER_ICON_PATH)
 
 func show_advantage(multiplier: float) -> void:
+	if _lbl_advantage_detail != null:
+		_lbl_advantage_detail.text = ""
 	if multiplier > 1.0:
 		_lbl_advantage.text = "VENTAJA x%.2f" % multiplier
 		_lbl_advantage.add_theme_color_override("font_color", Color(0.32, 1.0, 0.40, 1.0))
@@ -1010,8 +1533,35 @@ func show_advantage(multiplier: float) -> void:
 	else:
 		_lbl_advantage.text = ""
 
+func show_combat_preview(attacker, defender) -> void:
+	if attacker == null or defender == null:
+		hide_advantage()
+		return
+
+	var attacker_type: int = -1 if attacker is Master else int(attacker.get("unit_type"))
+	var defender_type: int = -1 if defender is Master else int(defender.get("unit_type"))
+	var attacker_name: String = str(UNIT_TYPE_DISPLAY_NAMES.get(attacker_type, str(attacker.get("unit_name"))))
+	var defender_name: String = str(UNIT_TYPE_DISPLAY_NAMES.get(defender_type, str(defender.get("unit_name"))))
+	var atk_mult: float = Unit.get_damage_multiplier(attacker_type, defender_type)
+	var def_mult: float = Unit.get_damage_multiplier(defender_type, attacker_type)
+
+	if atk_mult > 1.0:
+		_lbl_advantage.text = "%s > %s" % [attacker_name, defender_name]
+		_lbl_advantage.add_theme_color_override("font_color", Color(0.32, 1.0, 0.40, 1.0))
+	elif atk_mult < 1.0:
+		_lbl_advantage.text = "%s < %s" % [attacker_name, defender_name]
+		_lbl_advantage.add_theme_color_override("font_color", Color(1.0, 0.38, 0.38, 1.0))
+	else:
+		_lbl_advantage.text = "%s = %s" % [attacker_name, defender_name]
+		_lbl_advantage.add_theme_color_override("font_color", Color(1.0, 0.88, 0.24, 1.0))
+
+	if _lbl_advantage_detail != null:
+		_lbl_advantage_detail.text = "ATQ x%.2f | RESP x%.2f" % [atk_mult, def_mult]
+
 func hide_advantage() -> void:
 	_lbl_advantage.text = ""
+	if _lbl_advantage_detail != null:
+		_lbl_advantage_detail.text = ""
 
 func show_placement_hint() -> void:
 	_placement_banner.visible = true
@@ -1021,12 +1571,246 @@ func hide_placement_hint() -> void:
 	_placement_banner.visible = false
 	_refresh_action_button_glow()
 
+func show_cell_context(cell: Vector2i) -> void:
+	if _cell_context_panel == null or hex_grid == null:
+		return
+	var terrain: int = int(hex_grid.call("get_terrain_at", cell.x, cell.y))
+	if terrain < 0:
+		hide_cell_context()
+		return
+
+	var terrain_name: String = str(TERRAIN_DISPLAY_NAMES.get(terrain, "Terreno"))
+	var move_text: String = _terrain_move_text(terrain)
+	var attack_mod: int = _terrain_attack_modifier(terrain)
+	var attack_text: String = _terrain_attack_text(attack_mod)
+	var title: String = terrain_name
+	var details: Array[String] = [move_text, attack_text]
+
+	var tower: Tower = hex_grid.call("get_tower_at", cell.x, cell.y) as Tower
+	if tower != null:
+		title += " · Torre +%d" % tower.income
+		details.append("Captura +%d / Robo +%d" % [tower.income, maxi(1, int(floor(float(tower.income) * 0.5)))])
+
+	_lbl_cell_context_title.text = title
+	_lbl_cell_context_body.text = " | ".join(details)
+	_cell_context_panel.visible = true
+
+func hide_cell_context() -> void:
+	if _cell_context_panel == null:
+		return
+	_cell_context_panel.visible = false
+
+func show_tutorial_step(step_index: int, total_steps: int, title: String, body: String, show_next: bool = false) -> void:
+	if _tutorial_panel == null:
+		return
+	_lbl_tutorial_step.text = "TUTORIAL %d/%d" % [step_index, total_steps]
+	_lbl_tutorial_title.text = title
+	_lbl_tutorial_body.text = body
+	_tutorial_panel.visible = true
+	if _btn_tutorial_next != null:
+		_btn_tutorial_next.visible = show_next
+	if _tutorial_panel_outline != null:
+		_tutorial_panel_outline.visible = true
+
+func hide_tutorial() -> void:
+	if _tutorial_panel == null:
+		return
+	_tutorial_panel.visible = false
+	if _btn_tutorial_next != null:
+		_btn_tutorial_next.visible = false
+	if _tutorial_panel_outline != null:
+		_tutorial_panel_outline.visible = false
+	set_tutorial_world_markers(false, Vector3.ZERO, false, Vector3.ZERO)
+	set_tutorial_focus("")
+	_tutorial_custom_focus_rect = Rect2()
+	_update_tutorial_spotlight("")
+
+func set_tutorial_focus(target: String) -> void:
+	_tutorial_force_summon_glow = target == "summon"
+	_tutorial_force_end_turn_glow = target == "end_turn"
+	if _tutorial_summon_outline != null:
+		_tutorial_summon_outline.visible = target == "summon"
+	if _tutorial_end_turn_outline != null:
+		_tutorial_end_turn_outline.visible = target == "end_turn"
+	if _tutorial_summon_arrow != null:
+		_tutorial_summon_arrow.visible = target == "summon"
+	if _tutorial_end_turn_arrow != null:
+		_tutorial_end_turn_arrow.visible = target == "end_turn"
+	if _tutorial_resources_arrow != null:
+		_tutorial_resources_arrow.visible = target == "resources"
+	if _tutorial_advantage_arrow != null:
+		_tutorial_advantage_arrow.visible = target == "advantage"
+	if _tutorial_minimap_arrow != null:
+		_tutorial_minimap_arrow.visible = target == "minimap"
+	if _tutorial_unit_panel_arrow != null:
+		_tutorial_unit_panel_arrow.visible = target == "unit_panel"
+	if _tutorial_cards_arrow != null:
+		_tutorial_cards_arrow.visible = target == "cards"
+	if _tutorial_resources_outline != null:
+		_tutorial_resources_outline.visible = target == "resources"
+	if _tutorial_advantage_outline != null:
+		_tutorial_advantage_outline.visible = target == "advantage"
+	if _tutorial_minimap_outline != null:
+		_tutorial_minimap_outline.visible = target == "minimap"
+	if _tutorial_unit_panel_outline != null:
+		_tutorial_unit_panel_outline.visible = target == "unit_panel"
+	_refresh_action_button_glow()
+	_update_tutorial_spotlight(target)
+
+func set_tutorial_custom_focus_rect(rect: Rect2) -> void:
+	_tutorial_custom_focus_rect = rect
+
+func set_tutorial_world_markers(show_master: bool, master_world: Vector3, show_tower: bool, tower_world: Vector3) -> void:
+	_tutorial_show_master_arrow = show_master
+	_tutorial_master_world = master_world
+	_tutorial_show_tower_arrow = show_tower
+	_tutorial_tower_world = tower_world
+	if _tutorial_master_arrow != null:
+		_tutorial_master_arrow.visible = show_master
+	if _tutorial_tower_arrow != null:
+		_tutorial_tower_arrow.visible = show_tower
+
+func _make_tutorial_arrow(symbol: String = "▼") -> Label:
+	var lbl := Label.new()
+	lbl.text = symbol
+	lbl.visible = false
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lbl.add_theme_font_size_override("font_size", 34)
+	lbl.add_theme_color_override("font_color", Color(1.0, 0.88, 0.28, 0.96))
+	lbl.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.82))
+	lbl.add_theme_constant_override("shadow_offset_x", 2)
+	lbl.add_theme_constant_override("shadow_offset_y", 2)
+	lbl.size = Vector2(48.0, 40.0)
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.z_index = 20
+	return lbl
+
+func _make_tutorial_region_outline(rect: Rect2) -> TutorialOutline:
+	var outline := TutorialOutlineScript.new()
+	outline.position = rect.position
+	outline.size = rect.size
+	outline.visible = false
+	_root.add_child(outline)
+	return outline
+
+func _update_tutorial_spotlight(target: String) -> void:
+	if _tutorial_spotlight_rect == null or _tutorial_spotlight_mat == null:
+		return
+	var focus_rect: Rect2 = Rect2()
+	match target:
+		"resources":
+			focus_rect = Rect2(8, 8, 386, 44)
+		"advantage":
+			focus_rect = Rect2(408, 8, 472, 44)
+		"minimap":
+			focus_rect = Rect2(978, 8, 290, 182)
+		"unit_panel":
+			focus_rect = Rect2(22, 506, 334, 188)
+		"summon":
+			if _btn_summon != null:
+				focus_rect = Rect2(_btn_summon.position.x - 16.0, _btn_summon.position.y - 44.0, _btn_summon.size.x + 32.0, _btn_summon.size.y + 60.0)
+		"end_turn":
+			if _btn_end_turn != null:
+				focus_rect = Rect2(_btn_end_turn.position.x - 16.0, _btn_end_turn.position.y - 44.0, _btn_end_turn.size.x + 32.0, _btn_end_turn.size.y + 60.0)
+		"cards":
+			focus_rect = _tutorial_custom_focus_rect
+	var panel_rect := Rect2(_tutorial_panel.position - Vector2(12.0, 12.0), _tutorial_panel.size + Vector2(24.0, 24.0))
+	var show_spotlight: bool = _tutorial_panel != null and _tutorial_panel.visible and focus_rect.size != Vector2.ZERO
+	_tutorial_spotlight_rect.visible = show_spotlight
+	if not show_spotlight:
+		return
+	_tutorial_spotlight_mat.set_shader_parameter("hole_a", Vector4(panel_rect.position.x, panel_rect.position.y, panel_rect.size.x, panel_rect.size.y))
+	_tutorial_spotlight_mat.set_shader_parameter("hole_b", Vector4(focus_rect.position.x, focus_rect.position.y, focus_rect.size.x, focus_rect.size.y))
+
+func _update_tutorial_arrows() -> void:
+	var bob: float = sin(_ui_fx_time * 5.4) * 5.0
+	if _tutorial_summon_arrow != null and _btn_summon != null and _tutorial_summon_arrow.visible:
+		_tutorial_summon_arrow.position = Vector2(
+			_btn_summon.position.x + _btn_summon.size.x * 0.5 - _tutorial_summon_arrow.size.x * 0.5,
+			_btn_summon.position.y - 34.0 + bob
+		)
+	if _tutorial_end_turn_arrow != null and _btn_end_turn != null and _tutorial_end_turn_arrow.visible:
+		_tutorial_end_turn_arrow.position = Vector2(
+			_btn_end_turn.position.x + _btn_end_turn.size.x * 0.5 - _tutorial_end_turn_arrow.size.x * 0.5,
+			_btn_end_turn.position.y - 34.0 + bob
+		)
+	if _tutorial_resources_arrow != null and _tutorial_resources_arrow.visible:
+		_tutorial_resources_arrow.position = Vector2(177.0, 48.0 + bob)
+	if _tutorial_advantage_arrow != null and _tutorial_advantage_arrow.visible:
+		_tutorial_advantage_arrow.position = Vector2(620.0, 48.0 + bob)
+	if _tutorial_minimap_arrow != null and _tutorial_minimap_arrow.visible:
+		_tutorial_minimap_arrow.position = Vector2(1098.0, 188.0 + bob)
+	if _tutorial_unit_panel_arrow != null and _tutorial_unit_panel_arrow.visible:
+		_tutorial_unit_panel_arrow.position = Vector2(164.0, 500.0 + bob)
+	if _tutorial_cards_arrow != null and _tutorial_cards_arrow.visible:
+		_tutorial_cards_arrow.position = Vector2(662.0, 516.0 + bob)
+	var cam: Camera3D = get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	if _tutorial_master_arrow != null and _tutorial_master_arrow.visible:
+		_tutorial_master_arrow.position = _tutorial_world_arrow_pos(cam, _tutorial_master_world, bob)
+	if _tutorial_tower_arrow != null and _tutorial_tower_arrow.visible:
+		_tutorial_tower_arrow.position = _tutorial_world_arrow_pos(cam, _tutorial_tower_world, bob)
+
+func _tutorial_world_arrow_pos(cam: Camera3D, world_pos: Vector3, bob: float) -> Vector2:
+	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
+	var sample: Vector3 = world_pos + Vector3(0.0, 1.5, 0.0)
+	if cam.is_position_behind(sample):
+		return Vector2(-5000.0, -5000.0)
+	var projected: Vector2 = cam.unproject_position(sample)
+	projected.x = clampf(projected.x, 20.0, viewport_size.x - 68.0)
+	projected.y = clampf(projected.y, 20.0, viewport_size.y - 68.0)
+	return projected + Vector2(-24.0, -46.0 + bob)
+
+func _terrain_move_text(terrain: int) -> String:
+	match terrain:
+		1:
+			return "Inaccesible"
+		6:
+			return "Inaccesible"
+		2, 3:
+			return "Movimiento 2"
+		_:
+			return "Movimiento 1"
+
+func _terrain_attack_modifier(terrain: int) -> int:
+	match terrain:
+		1:
+			return -1
+		2:
+			return 2
+		3:
+			return 1
+		_:
+			return 0
+
+func _terrain_attack_text(modifier: int) -> String:
+	if modifier > 0:
+		return "Ataques +%d" % modifier
+	if modifier < 0:
+		return "Ataques %d" % modifier
+	return "Ataques sin bonus"
+
 func _refresh_action_button_glow() -> void:
 	var current_player: int = turn_manager.current_player if turn_manager != null else 1
+	var ai_turn: bool = _is_current_turn_ai()
 	var summon_ready: bool = _can_current_player_summon(current_player)
 	var no_actions_left: bool = not _has_player_actions_remaining(current_player)
-	_apply_button_glow(_summon_glow, _btn_summon, SUMMON_READY_COLOR, summon_ready)
-	_apply_button_glow(_end_turn_glow, _btn_end_turn, END_TURN_READY_COLOR, no_actions_left)
+	if _btn_summon != null:
+		_btn_summon.disabled = ai_turn
+		_btn_summon.mouse_filter = Control.MOUSE_FILTER_IGNORE if ai_turn else Control.MOUSE_FILTER_STOP
+	if _btn_end_turn != null:
+		_btn_end_turn.disabled = ai_turn
+		_btn_end_turn.mouse_filter = Control.MOUSE_FILTER_IGNORE if ai_turn else Control.MOUSE_FILTER_STOP
+	var summon_glow_enabled: bool = (summon_ready and not ai_turn) or (_tutorial_force_summon_glow and not ai_turn)
+	var end_turn_glow_enabled: bool = (no_actions_left and not ai_turn) or (_tutorial_force_end_turn_glow and not ai_turn)
+	_apply_button_glow(_summon_glow, _btn_summon, SUMMON_READY_COLOR, summon_glow_enabled)
+	_apply_button_glow(_end_turn_glow, _btn_end_turn, END_TURN_READY_COLOR, end_turn_glow_enabled)
+
+func _is_current_turn_ai() -> bool:
+	if turn_manager == null:
+		return false
+	return GameData.get_player_mode(turn_manager.current_player) == "ai"
 
 func _apply_button_glow(glow: ColorRect, button: Button, color: Color, enabled: bool) -> void:
 	if glow == null or button == null:
@@ -1172,6 +1956,7 @@ func show_combat_result(attacker: Unit, defender: Unit, result: Dictionary) -> v
 		"result": result,
 	}
 	_btn_last_combat.disabled = false
+	refresh_advantage()
 
 func _toggle_combat_panel() -> void:
 	if _combat_panel.visible:

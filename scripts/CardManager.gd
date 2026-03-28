@@ -7,23 +7,20 @@ signal unit_killed_by_card(unit: Unit, killer_player_id: int)
 signal message_emitted(text: String, tint: Color)
 
 const DECK_BLUEPRINT: Array[Dictionary] = [
-	{"type": "essence", "value": 2, "color": "cyan", "count": 10},
+	{"type": "essence", "value": 2, "color": "cyan", "count": 8},
 	{"type": "essence", "value": 3, "color": "cyan", "count": 5},
-	{"type": "essence", "value": 5, "color": "cyan", "count": 5},
-	{"type": "essence", "value": 7, "color": "cyan", "count": 3},
-	{"type": "essence", "value": 9, "color": "cyan", "count": 2},
-	{"type": "essence", "value": 10, "color": "cyan", "count": 1},
-	{"type": "heal", "value": 2, "color": "teal", "count": 5},
-	{"type": "heal", "value": 5, "color": "teal", "count": 5},
-	{"type": "heal", "value": 7, "color": "teal", "count": 3},
-	{"type": "heal", "value": 10, "color": "teal", "count": 1},
+	{"type": "essence", "value": 4, "color": "cyan", "count": 3},
+	{"type": "essence", "value": 5, "color": "cyan", "count": 2},
+	{"type": "heal", "value": 2, "color": "teal", "count": 6},
+	{"type": "heal", "value": 4, "color": "teal", "count": 4},
+	{"type": "heal", "value": 6, "color": "teal", "count": 2},
 	{"type": "damage", "value": 2, "color": "red", "count": 5},
-	{"type": "damage", "value": 5, "color": "red", "count": 5},
-	{"type": "damage", "value": 7, "color": "red", "count": 3},
-	{"type": "damage", "value": 10, "color": "red", "count": 1},
+	{"type": "damage", "value": 3, "color": "red", "count": 4},
+	{"type": "damage", "value": 4, "color": "red", "count": 3},
+	{"type": "damage", "value": 5, "color": "red", "count": 1},
+	{"type": "exp", "value": 1, "color": "purple", "count": 2},
 	{"type": "exp", "value": 2, "color": "purple", "count": 3},
 	{"type": "exp", "value": 3, "color": "purple", "count": 2},
-	{"type": "exp", "value": 5, "color": "purple", "count": 1},
 ]
 
 var deck: Array[Dictionary] = []
@@ -45,6 +42,10 @@ func setup_deck() -> void:
 				"value": int(entry.get("value", 0)),
 				"color": str(entry.get("color", "cyan")),
 			})
+
+	for player_id: int in GameData.get_player_ids():
+		for bonus_card: Dictionary in GameData.get_equipped_bonus_cards_for_player(player_id):
+			deck.append(bonus_card.duplicate(true))
 
 	var rng := RandomNumberGenerator.new()
 	rng.randomize()
@@ -83,7 +84,13 @@ func draw_card(player_id: int) -> void:
 		_emit_message("Mazo agotado", Color(1.0, 0.74, 0.34))
 		return
 
-	var card: Dictionary = deck.pop_front()
+	var draw_index: int = _find_next_drawable_card_index(player_id)
+	if draw_index == -1:
+		_emit_message("No hay cartas para esta faccion", Color(0.94, 0.74, 0.34))
+		return
+
+	var card: Dictionary = deck[draw_index]
+	deck.remove_at(draw_index)
 	hand.append(card)
 	hands[player_id] = hand
 	emit_signal("hand_changed", player_id)
@@ -140,3 +147,36 @@ func _unit_world_pos(unit: Unit) -> Vector3:
 		if cell != Vector2i(-1, -1):
 			return hex_grid.call("hex_to_world", cell.x, cell.y)
 	return Vector3(unit.visual_pos.x, 0.0, unit.visual_pos.y)
+
+func _find_next_drawable_card_index(player_id: int) -> int:
+	for i: int in range(deck.size()):
+		var card: Dictionary = deck[i]
+		if _can_player_draw_card(player_id, card):
+			return i
+	return -1
+
+func _can_player_draw_card(player_id: int, card: Dictionary) -> bool:
+	if not card.has("allowed_player_ids"):
+		return true
+	var allowed: Variant = card.get("allowed_player_ids", [])
+	if not (allowed is Array):
+		return true
+	for allowed_player: Variant in allowed:
+		if int(allowed_player) == player_id:
+			return true
+	return false
+
+func serialize_state() -> Dictionary:
+	return {
+		"deck": deck.duplicate(true),
+		"hands": hands.duplicate(true),
+		"used_card_this_turn": used_card_this_turn,
+	}
+
+func load_state(state: Dictionary) -> void:
+	deck = (state.get("deck", []) as Array).duplicate(true)
+	hands = (state.get("hands", {}) as Dictionary).duplicate(true)
+	used_card_this_turn = bool(state.get("used_card_this_turn", false))
+	for player_id: int in [1, 2, 3, 4]:
+		if not hands.has(player_id):
+			hands[player_id] = []

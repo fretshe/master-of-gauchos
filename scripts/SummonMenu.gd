@@ -1,6 +1,8 @@
 extends CanvasLayer
 
 const UnitScript := preload("res://scripts/Unit.gd")
+const SummonManagerScript := preload("res://scripts/SummonManager.gd")
+const TutorialOutlineScript := preload("res://scripts/TutorialOutline.gd")
 
 signal unit_type_chosen(unit_type: int)
 signal cancelled()
@@ -12,12 +14,7 @@ const UNIT_TYPES: Array[int] = [
 	UnitScript.UnitType.RIDER,
 ]
 
-const TYPE_COSTS: Dictionary = {
-	UnitScript.UnitType.WARRIOR: 10,
-	UnitScript.UnitType.ARCHER: 12,
-	UnitScript.UnitType.LANCER: 11,
-	UnitScript.UnitType.RIDER: 13,
-}
+const TYPE_COSTS: Dictionary = SummonManagerScript.SUMMON_COSTS
 
 const TYPE_ACCENTS: Dictionary = {
 	UnitScript.UnitType.WARRIOR: Color(0.52, 0.90, 1.00, 1.0),
@@ -45,6 +42,7 @@ var _essence_label: Label = null
 var _player_label: Label = null
 var _faction_label: Label = null
 var _portrait_cache: Dictionary = {}
+var _tutorial_focus_unit_type: int = -999
 
 const CLASS_ICON_PATHS := {
 	UnitScript.UnitType.WARRIOR: "res://assets/sprites/ui/class_icons/warrior_icon.png",
@@ -64,6 +62,9 @@ func show_for_player(player_id: int, resource_mgr) -> void:
 	_resource_manager = resource_mgr
 	_refresh_cards()
 	visible = true
+
+func _process(_delta: float) -> void:
+	_update_tutorial_card_focus()
 
 func _build_ui() -> void:
 	_overlay = ColorRect.new()
@@ -164,24 +165,44 @@ func _build_card(unit_type: int, rel_pos: Vector2) -> Button:
 	accent_glow.position = Vector2(0.0, 0.0)
 	accent_glow.size = Vector2(4.0, btn.size.y)
 	accent_glow.color = C_ESSENCE
+	accent_glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	btn.add_child(accent_glow)
 
 	var accent_fade := ColorRect.new()
 	accent_fade.position = Vector2(0.0, 0.0)
 	accent_fade.size = Vector2(btn.size.x, 20.0)
 	accent_fade.color = Color(C_ESSENCE.r, C_ESSENCE.g, C_ESSENCE.b, 0.08)
+	accent_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	btn.add_child(accent_fade)
 
 	var portrait_glow := ColorRect.new()
 	portrait_glow.position = Vector2(12.0, 12.0)
 	portrait_glow.size = Vector2(84.0, 108.0)
 	portrait_glow.color = Color(C_ESSENCE.r, C_ESSENCE.g, C_ESSENCE.b, 0.10)
+	portrait_glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	btn.add_child(portrait_glow)
+
+	var tutorial_glow := ColorRect.new()
+	tutorial_glow.name = "TutorialGlow"
+	tutorial_glow.position = Vector2(6.0, 6.0)
+	tutorial_glow.size = btn.size - Vector2(12.0, 12.0)
+	tutorial_glow.color = Color(1.0, 0.88, 0.24, 0.0)
+	tutorial_glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tutorial_glow.visible = false
+	btn.add_child(tutorial_glow)
+
+	var tutorial_outline := TutorialOutlineScript.new()
+	tutorial_outline.name = "TutorialOutline"
+	tutorial_outline.position = Vector2(-6.0, -6.0)
+	tutorial_outline.size = btn.size + Vector2(12.0, 12.0)
+	tutorial_outline.visible = false
+	btn.add_child(tutorial_outline)
 
 	var portrait_frame := ColorRect.new()
 	portrait_frame.position = Vector2(16.0, 16.0)
 	portrait_frame.size = Vector2(80.0, 100.0)
 	portrait_frame.color = C_PANEL_SOFT
+	portrait_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	btn.add_child(portrait_frame)
 
 	var portrait_path: String = FactionData.get_sprite_path(GameData.get_faction_for_player(_player_id), unit_type)
@@ -227,6 +248,7 @@ func _build_card(unit_type: int, rel_pos: Vector2) -> Button:
 	var cost_box := Panel.new()
 	cost_box.position = Vector2(226.0, 18.0)
 	cost_box.size = Vector2(80.0, 40.0)
+	cost_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var cost_style := StyleBoxFlat.new()
 	cost_style.bg_color = Color(0.10, 0.16, 0.22, 0.78)
 	cost_style.border_color = Color(C_ESSENCE.r, C_ESSENCE.g, C_ESSENCE.b, 0.26)
@@ -239,6 +261,7 @@ func _build_card(unit_type: int, rel_pos: Vector2) -> Button:
 	cost_line.position = Vector2(0.0, 0.0)
 	cost_line.size = Vector2(80.0, 2.0)
 	cost_line.color = Color(C_ESSENCE.r, C_ESSENCE.g, C_ESSENCE.b, 0.72)
+	cost_line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cost_box.add_child(cost_line)
 
 	var cost_label := _make_label("", Vector2(0.0, 4.0), 22, C_ESSENCE)
@@ -329,10 +352,12 @@ func _on_card_pressed(unit_type: int) -> void:
 	var cost: int = TYPE_COSTS[unit_type]
 	if _resource_manager != null and not _resource_manager.can_afford(_player_id, cost):
 		return
+	clear_tutorial_focus()
 	visible = false
 	emit_signal("unit_type_chosen", unit_type)
 
 func _on_cancel() -> void:
+	clear_tutorial_focus()
 	visible = false
 	emit_signal("cancelled")
 
@@ -341,6 +366,33 @@ func _input(event: InputEvent) -> void:
 		return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		_on_cancel()
+
+func set_tutorial_focus_unit(unit_type: int) -> void:
+	_tutorial_focus_unit_type = unit_type
+	_update_tutorial_card_focus()
+
+func clear_tutorial_focus() -> void:
+	_tutorial_focus_unit_type = -999
+	_update_tutorial_card_focus()
+
+func _update_tutorial_card_focus() -> void:
+	if _panel == null:
+		return
+
+	var pulse: float = 0.58 + 0.42 * (0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.006))
+	for unit_type: int in UNIT_TYPES:
+		var card := _panel.get_node_or_null("Card_%d" % unit_type) as Button
+		if card == null:
+			continue
+		var is_target: bool = visible and unit_type == _tutorial_focus_unit_type
+		var glow := card.get_node_or_null("TutorialGlow") as ColorRect
+		if glow != null:
+			glow.visible = is_target
+			if is_target:
+				glow.color = Color(1.0, 0.88, 0.24, 0.10 + pulse * 0.18)
+		var outline := card.get_node_or_null("TutorialOutline") as Control
+		if outline != null:
+			outline.visible = is_target
 
 func _make_panel(pos: Vector2, sz: Vector2) -> Panel:
 	var panel := Panel.new()
@@ -358,6 +410,7 @@ func _make_label(text: String, pos: Vector2, fs: int, col: Color) -> Label:
 	var lbl := Label.new()
 	lbl.text = text
 	lbl.position = pos
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	lbl.add_theme_font_size_override("font_size", fs)
 	lbl.add_theme_color_override("font_color", col)
 	return lbl
@@ -366,6 +419,7 @@ func _make_chip(pos: Vector2, sz: Vector2, accent: Color, caption: String) -> Pa
 	var chip := Panel.new()
 	chip.position = pos
 	chip.size = sz
+	chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.10, 0.12, 0.18, 0.82)
 	style.border_color = Color(accent.r, accent.g, accent.b, 0.48)
@@ -377,6 +431,7 @@ func _make_chip(pos: Vector2, sz: Vector2, accent: Color, caption: String) -> Pa
 	accent_line.position = Vector2(0.0, 0.0)
 	accent_line.size = Vector2(sz.x, 2.0)
 	accent_line.color = Color(accent.r, accent.g, accent.b, 0.75)
+	accent_line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	chip.add_child(accent_line)
 
 	var lbl := _make_label(caption, Vector2(18.0, 6.0), 11, C_MUTED.lightened(0.12))
@@ -404,6 +459,7 @@ func _make_stat_line(label_text: String, value_text: String, pos: Vector2, accen
 	var root := Control.new()
 	root.position = pos
 	root.size = Vector2(46.0, 32.0)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var cap := _make_label(label_text, Vector2.ZERO, 11, C_MUTED.lightened(0.10))
 	root.add_child(cap)
@@ -452,7 +508,7 @@ func _get_portrait_texture(path: String, unit_type: int = -999, background_varia
 	var base_texture: Texture2D = load(path)
 	if base_texture == null:
 		return null
-	var image: Image = Image.load_from_file(path)
+	var image: Image = base_texture.get_image()
 	if image == null or image.is_empty():
 		_portrait_cache[cache_key] = base_texture
 		return base_texture

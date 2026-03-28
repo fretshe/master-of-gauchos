@@ -30,6 +30,7 @@ var _master_summoning: bool       = false
 var _master_for_free_summon: Unit = null
 
 func _ready() -> void:
+	GameData.load_meta()
 	# ── Generate map BEFORE any game system is created ────────────────────────
 	_generate_map()
 
@@ -143,8 +144,9 @@ func _ready() -> void:
 	add_child(vignette_layer)
 
 	MusicManager.play_battle_music(1)  # game always starts on player 1's turn
+	GameData.call_deferred("apply_selected_theme", get_window())
 	print("[Main] Game ready — map: %s | seed: %d" % [
-		["Llanuras", "Montañas", "Volcánico"][GameData.current_map],
+		["Llanuras", "Sierras", "Precordillera"][GameData.current_map],
 		GameData.map_seed
 	])
 	print("[Main] WASD/↑↓←→: cámara | Enter: fin de turno | E: invocar | Q: habilidad Maestro | Esc: cancelar")
@@ -155,12 +157,13 @@ func _ready() -> void:
 # ─── Map generation ─────────────────────────────────────────────────────────────
 func _generate_map() -> void:
 	var gen: RefCounted  = MapGeneratorScript.new()
-	var map_types: Array[String] = ["plains", "mountains", "volcanic"]
+	var map_types: Array[String] = ["plains", "sierras", "precordillera"]
 	var map_type: String = map_types[GameData.current_map]
 	var seed_val: int    = GameData.map_seed if GameData.map_seed > 0 else randi()
 	gen.generate(seed_val, map_type, GameData.map_size)
 	GameData.map_terrain         = gen.get_terrain()
 	GameData.map_tower_positions = gen.get_tower_positions()
+	GameData.map_tower_incomes   = gen.get_tower_incomes()
 	GameData.map_master_p1       = gen.get_master_p1_cell()
 	GameData.map_master_p2       = gen.get_master_p2_cell()
 	GameData.map_seed            = gen.get_seed()
@@ -224,6 +227,8 @@ func _on_tower_captured(_tower_name: String, _player_id: int) -> void:
 	else:
 		_towers_p2 += 1
 	hud.refresh_towers()
+	if turn_manager != null and turn_manager.has_method("handle_tower_captured"):
+		turn_manager.handle_tower_captured(_player_id)
 
 func _on_placement_confirmed(col: int, row: int, unit_type: int, player_id: int) -> void:
 	summon_manager.summon(unit_type, col, row, player_id)
@@ -259,7 +264,11 @@ func _on_master_placement_confirmed(col: int, row: int, unit_type: int, player_i
 		hud.show_unit(placed)
 
 func _on_enemy_inspected(_enemy: Unit, multiplier: float) -> void:
-	hud.show_advantage(multiplier)
+	var attacker: Unit = hex_grid.get_selected_unit() if hex_grid != null and hex_grid.has_method("get_selected_unit") else null
+	if attacker != null and hud.has_method("show_combat_preview"):
+		hud.show_combat_preview(attacker, _enemy)
+	else:
+		hud.show_advantage(multiplier)
 
 func _on_combat_resolved(attacker: Unit, defender: Unit, result: Dictionary) -> void:
 	hud.show_combat_result(attacker, defender, result)
@@ -288,6 +297,7 @@ func _on_game_over(winner_id: int) -> void:
 	GameData.units_killed_p2    = maxi(0, _summoned_p1 - remaining_p1)
 	GameData.towers_captured_p1 = _towers_p1
 	GameData.towers_captured_p2 = _towers_p2
+	GameData.record_completed_run()
 
 	if winner_id == 0:
 		print("[Main] La batalla termina en EMPATE.")

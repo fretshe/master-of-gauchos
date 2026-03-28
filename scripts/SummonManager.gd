@@ -5,9 +5,9 @@ const UnitScript := preload("res://scripts/Unit.gd")
 # ─── Summon costs ──────────────────────────────────────────────────────────────
 const SUMMON_COSTS: Dictionary = {
 	UnitScript.UnitType.WARRIOR: 10,
-	UnitScript.UnitType.ARCHER:  12,
-	UnitScript.UnitType.LANCER:  11,
-	UnitScript.UnitType.RIDER:   13,
+	UnitScript.UnitType.ARCHER:  13,
+	UnitScript.UnitType.LANCER:  12,
+	UnitScript.UnitType.RIDER:   12,
 }
 
 const TYPE_NAMES: Dictionary = {
@@ -57,7 +57,7 @@ func summon_free(unit_type: int, col: int, row: int, player_id: int) -> bool:
 	var unit := UnitScript.new()
 	unit.setup(TYPE_NAMES[unit_type], unit_type, player_id, 1)
 	unit.exhaust()
-	hex_grid.place_unit(unit, col, row)
+	hex_grid.place_unit(unit, col, row, true)
 	hex_grid.queue_redraw()
 	AudioManager.play_summon()
 	print("[SummonManager] Master free summon: Player %d summoned %s at (%d,%d)" % [
@@ -93,7 +93,7 @@ func summon(unit_type: int, col: int, row: int, player_id: int) -> bool:
 	var unit := UnitScript.new()
 	unit.setup(TYPE_NAMES[unit_type], unit_type, player_id, 1)
 	unit.exhaust()
-	hex_grid.place_unit(unit, col, row)
+	hex_grid.place_unit(unit, col, row, true)
 	hex_grid.queue_redraw()
 	AudioManager.play_summon()
 
