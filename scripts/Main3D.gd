@@ -45,6 +45,7 @@ var _combat_balance_debug: CombatBalanceDebug = null
 var _card_balance_debug: CardBalanceDebug = null
 var _tutorial_active: bool = false
 var _tutorial_step: int = -1
+var _tutorial_waiting_for_summon_explanation: bool = false
 const _TUTORIAL_STEPS: Array[String] = [
 	"hud_resources",
 	"hud_advantage",
@@ -207,10 +208,7 @@ func _ready() -> void:
 	if _world_environment != null:
 		_apply_unit_time_lighting(_capture_lighting_profile())
 	if _has_saved_match_state():
-		hud.update_turn(turn_manager.current_player)
-		hud.refresh_towers()
-		hex_grid.current_player = turn_manager.current_player
-		_focus_camera_on_master(turn_manager.current_player, 7.0)
+		_on_turn_changed(turn_manager.current_player)
 	else:
 		_play_intro_camera_sequence()
 		_start_tutorial_if_needed()
@@ -343,13 +341,21 @@ func _set_pause_state(paused: bool) -> void:
 	if paused:
 		if summon_menu != null:
 			summon_menu.visible = false
-		if hex_grid != null:
-			hex_grid.exit_placement_mode()
-			hex_grid.exit_card_target_mode()
-			hex_grid.deselect()
+		_clear_transient_board_state(true)
 	if hud != null and hud.has_method("set_pause_menu_open"):
 		hud.call("set_pause_menu_open", paused)
 	get_tree().paused = paused
+
+func _clear_transient_board_state(reset_camera: bool = false) -> void:
+	if hex_grid != null:
+		hex_grid.exit_placement_mode()
+		hex_grid.exit_card_target_mode()
+		hex_grid.deselect()
+		if hex_grid.has_method("hide_combat_stage"):
+			hex_grid.call("hide_combat_stage", true)
+	set_combat_cinematic_ui(false, [])
+	if reset_camera and camera != null and camera.has_method("force_reset_combat_state"):
+		camera.call("force_reset_combat_state")
 
 func _on_pause_resume_pressed() -> void:
 	_set_pause_state(false)
@@ -820,7 +826,13 @@ func _try_master_free_summon() -> void:
 
 func _on_unit_type_chosen(unit_type: int) -> void:
 	hex_grid.enter_placement_mode(unit_type, turn_manager.current_player)
-	hud.show_placement_hint()
+	var unit_name: String = _get_unit_display_name(unit_type)
+	var message: String = "Elegiste %s. Ahora colocalo en un hexagono resaltado junto a tu Maestro." % unit_name
+	var counter_hint: String = _get_summon_counter_hint(unit_type)
+	if counter_hint != "":
+		message += " " + counter_hint
+	if not (_tutorial_active and _get_current_tutorial_key() == "summon_unit"):
+		hud.show_placement_hint(message, unit_type)
 
 func _on_summon_cancelled() -> void:
 	hex_grid.exit_placement_mode()
@@ -843,7 +855,16 @@ func _on_placement_confirmed(col: int, row: int, unit_type: int, player_id: int)
 		hud.show_unit(placed)
 		_apply_unit_time_lighting(_capture_lighting_profile())
 	if _tutorial_active and player_id == 1 and _get_current_tutorial_key() == "summon_unit":
-		_advance_tutorial()
+		_tutorial_waiting_for_summon_explanation = true
+		if hud != null:
+			hud.set_tutorial_focus("")
+			hud.set_tutorial_world_markers(false, Vector3.ZERO, false, Vector3.ZERO)
+			if hud.has_method("show_tutorial_summon_explanation"):
+				hud.call("show_tutorial_summon_explanation", _get_unit_display_name(unit_type), _get_summon_counter_hint(unit_type))
+		if hex_grid != null:
+			hex_grid.clear_tutorial_focus_cell()
+			hex_grid.clear_highlights()
+		return
 
 func _on_card_target_selected(card_index: int, target_unit: Unit) -> void:
 	var current_player_id: int = turn_manager.current_player
@@ -1023,6 +1044,7 @@ func _on_combat_resolved(attacker: Unit, defender: Unit, result: Dictionary) -> 
 
 func _on_turn_changed(player_id: int) -> void:
 	print("[Main3D] *** Turno del Jugador %d ***" % player_id)
+	_clear_transient_board_state(false)
 	hex_grid.exit_card_target_mode()
 	hex_grid.current_player = player_id
 	_apply_time_of_day(turn_manager.turn_number)
@@ -1113,6 +1135,7 @@ func _skip_tutorial() -> void:
 func _finish_tutorial() -> void:
 	_tutorial_active = false
 	_tutorial_step = -1
+	_tutorial_waiting_for_summon_explanation = false
 	if hud != null:
 		hud.hide_tutorial()
 		hud.set_tutorial_focus("")
@@ -1135,6 +1158,7 @@ func _advance_tutorial() -> void:
 func _show_tutorial_step() -> void:
 	if hud == null or not _tutorial_active:
 		return
+	_tutorial_waiting_for_summon_explanation = false
 	var title: String = ""
 	var body: String = ""
 	var show_next: bool = false
@@ -1196,6 +1220,12 @@ func _on_tutorial_next_pressed() -> void:
 	match _get_current_tutorial_key():
 		"hud_resources", "hud_advantage", "hud_minimap", "hud_unit_panel", "hud_cards":
 			_advance_tutorial()
+		"summon_unit":
+			if _tutorial_waiting_for_summon_explanation:
+				_tutorial_waiting_for_summon_explanation = false
+				if hud != null and hud.has_method("hide_tutorial_info"):
+					hud.call("hide_tutorial_info")
+				_advance_tutorial()
 
 func _update_tutorial_focus_visuals() -> void:
 	if hud != null:
@@ -1234,7 +1264,7 @@ func _update_tutorial_focus_visuals() -> void:
 				card_hand.call("set_tutorial_highlight", true)
 			hud.set_tutorial_focus("cards")
 		"select_master":
-			hud.set_tutorial_world_markers(master_cell != Vector2i(-1, -1), master_world, tower_cell != Vector2i(-1, -1), tower_world)
+			hud.set_tutorial_world_markers(master_cell != Vector2i(-1, -1), master_world, false, Vector3.ZERO)
 			if master_cell != Vector2i(-1, -1):
 				hex_grid.set_tutorial_focus_cell(master_cell)
 		"capture_tower":
@@ -1275,6 +1305,31 @@ func _tutorial_cell_world(cell: Vector2i) -> Vector3:
 		return Vector3.ZERO
 	return hex_grid.hex_to_world(cell.x, cell.y)
 
+func _get_summon_counter_hint(unit_type: int) -> String:
+	for pair: Array in UnitScript.COUNTER_CHART:
+		if int(pair[0]) == unit_type:
+			return "Rinde bien contra %s." % _get_unit_display_name(int(pair[1]))
+	match unit_type:
+		UnitScript.UnitType.ARCHER:
+			return "Ataca a distancia y ayuda a abrir combate."
+		UnitScript.UnitType.RIDER:
+			return "Sirve para moverse rapido y presionar flancos."
+		_:
+			return ""
+
+func _get_unit_display_name(unit_type: int) -> String:
+	match unit_type:
+		UnitScript.UnitType.WARRIOR:
+			return "Guerrero"
+		UnitScript.UnitType.ARCHER:
+			return "Arquero"
+		UnitScript.UnitType.LANCER:
+			return "Lancero"
+		UnitScript.UnitType.RIDER:
+			return "Jinete"
+		_:
+			return "Unidad"
+
 func _has_saved_match_state() -> bool:
 	return GameData.has_loaded_match_state and not GameData.loaded_match_state.is_empty()
 
@@ -1296,6 +1351,7 @@ func _save_current_game() -> void:
 
 func _restore_saved_game() -> void:
 	var saved_state: Dictionary = GameData.loaded_match_state
+	_clear_transient_board_state(true)
 	if resource_manager != null and resource_manager.has_method("load_state"):
 		resource_manager.load_state(saved_state.get("resource_manager", {}))
 	if turn_manager != null and turn_manager.has_method("load_state"):

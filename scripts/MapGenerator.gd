@@ -9,6 +9,17 @@ const DESERT   := 4
 const VOLCANO  := 5
 const CORDILLERA := 6
 
+const NEIGHBORS_EVEN: Array = [
+	Vector2i(1, -1), Vector2i(1, 0),
+	Vector2i(0, 1), Vector2i(-1, 1),
+	Vector2i(-1, 0), Vector2i(0, -1),
+]
+const NEIGHBORS_ODD: Array = [
+	Vector2i(1, 0), Vector2i(1, 1),
+	Vector2i(0, 1), Vector2i(-1, 1),
+	Vector2i(-1, 0), Vector2i(0, -1),
+]
+
 # ─── State ──────────────────────────────────────────────────────────────────────
 var COLS: int = 24
 var ROWS: int = 16
@@ -44,6 +55,7 @@ func generate(p_seed: int, map_type: String, map_size: Vector2i = Vector2i(24, 1
 	_ensure_small_map_mountains()
 	_place_towers()
 	_place_masters()
+	_ensure_home_towers()
 	_assign_tower_incomes()
 
 func get_terrain() -> Array:
@@ -572,6 +584,50 @@ func _place_masters_precordillera() -> void:
 		_master_p2 = _find_lowland_near(right_a, ROWS - 5)
 		_master_p3 = _find_lowland_near(right_b, maxi(4, ROWS / 3))
 		_master_p4 = _find_lowland_near(right_b, mini(ROWS - 5, (ROWS * 2) / 3))
+
+func _ensure_home_towers() -> void:
+	var masters: Array[Vector2i] = [_master_p1, _master_p2, _master_p3, _master_p4]
+	for master_cell: Vector2i in masters:
+		if master_cell == Vector2i(-1, -1):
+			continue
+		if _has_adjacent_tower(master_cell):
+			continue
+		var tower_cell: Vector2i = _find_adjacent_tower_cell(master_cell)
+		if tower_cell != Vector2i(-1, -1) and not _tower_positions.has(tower_cell):
+			_tower_positions.append(tower_cell)
+
+func _has_adjacent_tower(master_cell: Vector2i) -> bool:
+	for neighbor: Vector2i in _get_hex_neighbors(master_cell):
+		if _tower_positions.has(neighbor):
+			return true
+	return false
+
+func _find_adjacent_tower_cell(master_cell: Vector2i) -> Vector2i:
+	for neighbor: Vector2i in _get_hex_neighbors(master_cell):
+		if _is_valid_home_tower_cell(neighbor):
+			return neighbor
+	return _find_walkable_near(master_cell.x, master_cell.y)
+
+func _get_hex_neighbors(cell: Vector2i) -> Array[Vector2i]:
+	var offsets: Array = NEIGHBORS_ODD if cell.x % 2 == 1 else NEIGHBORS_EVEN
+	var result: Array[Vector2i] = []
+	for offset: Vector2i in offsets:
+		var nc: int = cell.x + offset.x
+		var nr: int = cell.y + offset.y
+		if nc < 0 or nc >= COLS or nr < 0 or nr >= ROWS:
+			continue
+		result.append(Vector2i(nc, nr))
+	return result
+
+func _is_valid_home_tower_cell(cell: Vector2i) -> bool:
+	if cell == Vector2i(-1, -1):
+		return false
+	if _tower_positions.has(cell):
+		return false
+	if cell == _master_p1 or cell == _master_p2 or cell == _master_p3 or cell == _master_p4:
+		return false
+	var terrain_type: int = _terrain[cell.y][cell.x]
+	return terrain_type != WATER and terrain_type != CORDILLERA
 
 # ─── Helpers ────────────────────────────────────────────────────────────────────
 func _find_grass_near(tc: int, transform_val: int) -> Vector2i:

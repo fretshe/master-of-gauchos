@@ -235,30 +235,19 @@ func resolve_combat(attacker: Unit, defender: Unit,
 				def_rend.position if def_rend != null else def_pos, host
 			).finished
 
-	if camera != null:
-		if host != null and host.has_method("set_combat_tower_obstruction_fade"):
-			host.call("set_combat_tower_obstruction_fade", false)
-		if host != null and host.has_method("hide_combat_stage"):
-			host.call("hide_combat_stage")
-		if host != null and host.has_method("set_combat_team_rings_visible"):
-			host.call("set_combat_team_rings_visible", true)
-		if not attacker_died and atk_rend != null:
-			atk_rend.snap_to_world_position(atk_pos)
-			atk_rend.set_combat_focus(false)
-			atk_rend.reset_combat_facing()
-			atk_rend.set_tactical_mode()
-		if not defender_died and def_rend != null:
-			def_rend.snap_to_world_position(def_pos)
-			def_rend.set_combat_focus(false)
-			def_rend.reset_combat_facing()
-			def_rend.set_tactical_mode()
-		for r: Variant in all_renderers:
-			r.set_combat_dim(false)
-			r.set_selection_ring_visible(true)
-			r.restore_selection_ring()
-		VFXManager.remove_combat_health_bar(atk_hp_bar)
-		VFXManager.remove_combat_health_bar(def_hp_bar)
-		await camera.exit_combat_mode().finished
+	await _cleanup_visual_state(
+		camera,
+		host,
+		all_renderers,
+		atk_rend,
+		def_rend,
+		atk_pos,
+		def_pos,
+		atk_hp_bar,
+		def_hp_bar,
+		attacker_died,
+		defender_died
+	)
 
 	return {
 		"attacker_log": atk_log,
@@ -270,6 +259,47 @@ func resolve_combat(attacker: Unit, defender: Unit,
 		"attacker_hit_count": attacker_hit_count,
 		"defender_hit_count": defender_hit_count,
 	}
+
+func _cleanup_visual_state(
+		camera,
+		host: Node,
+		all_renderers: Array,
+		atk_rend,
+		def_rend,
+		atk_pos: Vector3,
+		def_pos: Vector3,
+		atk_hp_bar: Control,
+		def_hp_bar: Control,
+		attacker_died: bool,
+		defender_died: bool) -> void:
+	if host != null and host.has_method("set_combat_tower_obstruction_fade"):
+		host.call("set_combat_tower_obstruction_fade", false)
+	if host != null and host.has_method("hide_combat_stage"):
+		host.call("hide_combat_stage")
+	if host != null and host.has_method("set_combat_team_rings_visible"):
+		host.call("set_combat_team_rings_visible", true)
+	if not attacker_died and atk_rend != null:
+		atk_rend.snap_to_world_position(atk_pos)
+		atk_rend.set_combat_focus(false)
+		atk_rend.reset_combat_facing()
+		atk_rend.set_tactical_mode()
+	if not defender_died and def_rend != null:
+		def_rend.snap_to_world_position(def_pos)
+		def_rend.set_combat_focus(false)
+		def_rend.reset_combat_facing()
+		def_rend.set_tactical_mode()
+	for r: Variant in all_renderers:
+		if r == null:
+			continue
+		r.set_combat_dim(false)
+		r.set_selection_ring_visible(true)
+		r.restore_selection_ring()
+	VFXManager.remove_combat_health_bar(atk_hp_bar)
+	VFXManager.remove_combat_health_bar(def_hp_bar)
+	if camera != null and camera.has_method("exit_combat_mode"):
+		await camera.exit_combat_mode().finished
+	elif camera != null and camera.has_method("force_reset_combat_state"):
+		camera.force_reset_combat_state()
 
 
 # ─── Internal ───────────────────────────────────────────────────────────────────

@@ -9,6 +9,11 @@ var _root: Control = null
 var _panel: Panel = null
 var _tutorial_outline: TutorialOutline = null
 var _message_label: Label = null
+var _preview_panel: Panel = null
+var _preview_title: Label = null
+var _preview_value: Label = null
+var _preview_body: Label = null
+var _preview_target: Label = null
 var _slot_nodes: Array[Dictionary] = []
 var _hovered_card_index: int = -1
 var _armed_card_index: int = -1
@@ -102,6 +107,8 @@ func refresh_hand() -> void:
 				mote.visible = is_active and not spent
 				mote.color = Color(card_color.r, card_color.g, card_color.b, 0.0)
 
+	_update_preview(hand, spent)
+
 func _build_ui() -> void:
 	_root = Control.new()
 	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -132,6 +139,49 @@ func _build_ui() -> void:
 	_message_label.add_theme_font_size_override("font_size", 14)
 	_message_label.add_theme_color_override("font_color", Color(0.92, 0.92, 0.96, 0.0))
 	_root.add_child(_message_label)
+
+	_preview_panel = Panel.new()
+	_preview_panel.position = Vector2(442.0, 360.0)
+	_preview_panel.size = Vector2(490.0, 168.0)
+	_preview_panel.visible = false
+	_preview_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var preview_style := StyleBoxFlat.new()
+	preview_style.bg_color = Color(0.06, 0.08, 0.11, 0.96)
+	preview_style.border_color = Color(0.94, 0.96, 1.0, 0.18)
+	preview_style.set_border_width_all(1)
+	preview_style.set_corner_radius_all(3)
+	_preview_panel.add_theme_stylebox_override("panel", preview_style)
+	_root.add_child(_preview_panel)
+
+	_preview_title = Label.new()
+	_preview_title.position = Vector2(18.0, 14.0)
+	_preview_title.size = Vector2(320.0, 26.0)
+	_preview_title.add_theme_font_size_override("font_size", 22)
+	_preview_title.add_theme_color_override("font_color", Color(0.96, 0.97, 1.0, 0.98))
+	_preview_panel.add_child(_preview_title)
+
+	_preview_value = Label.new()
+	_preview_value.position = Vector2(360.0, 12.0)
+	_preview_value.size = Vector2(108.0, 32.0)
+	_preview_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_preview_value.add_theme_font_size_override("font_size", 28)
+	_preview_value.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.98))
+	_preview_panel.add_child(_preview_value)
+
+	_preview_body = Label.new()
+	_preview_body.position = Vector2(18.0, 48.0)
+	_preview_body.size = Vector2(454.0, 60.0)
+	_preview_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_preview_body.add_theme_font_size_override("font_size", 16)
+	_preview_body.add_theme_color_override("font_color", Color(0.88, 0.91, 0.98, 0.94))
+	_preview_panel.add_child(_preview_body)
+
+	_preview_target = Label.new()
+	_preview_target.position = Vector2(18.0, 118.0)
+	_preview_target.size = Vector2(454.0, 24.0)
+	_preview_target.add_theme_font_size_override("font_size", 13)
+	_preview_target.add_theme_color_override("font_color", Color(0.70, 0.82, 0.96, 0.92))
+	_preview_panel.add_child(_preview_target)
 
 	for i: int in range(3):
 		var slot_panel := Panel.new()
@@ -280,6 +330,31 @@ func _on_card_unhovered(card_index: int) -> void:
 func _has_active_card() -> bool:
 	return _armed_card_index >= 0 or _hovered_card_index >= 0
 
+func _update_preview(hand: Array, spent: bool) -> void:
+	if _preview_panel == null:
+		return
+	if _armed_card_index >= 0:
+		_preview_panel.visible = false
+		return
+	var preview_index: int = _hovered_card_index
+	if spent or preview_index < 0 or preview_index >= hand.size():
+		_preview_panel.visible = false
+		return
+
+	var card: Dictionary = hand[preview_index]
+	var card_color: Color = _card_color(str(card.get("color", "cyan")))
+	var preview_style: StyleBoxFlat = _preview_panel.get_theme_stylebox("panel") as StyleBoxFlat
+	if preview_style != null:
+		preview_style.border_color = Color(card_color.r, card_color.g, card_color.b, 0.46)
+		preview_style.bg_color = card_color.darkened(0.82)
+
+	_preview_title.text = _card_display_name(card)
+	_preview_value.text = str(int(card.get("value", 0)))
+	_preview_value.add_theme_color_override("font_color", card_color.lightened(0.16))
+	_preview_body.text = _card_description(card)
+	_preview_target.text = _card_target_text(card)
+	_preview_panel.visible = true
+
 func _cancel_armed_card() -> void:
 	_armed_card_index = -1
 	if hex_grid != null and hex_grid.has_method("exit_card_target_mode"):
@@ -343,6 +418,48 @@ func _card_name(card: Dictionary) -> String:
 			return "XP"
 		_:
 			return "?"
+
+func _card_display_name(card: Dictionary) -> String:
+	if card.has("display_name"):
+		return str(card.get("display_name", "Carta"))
+	match str(card.get("type", "")):
+		"essence":
+			return "Esencia"
+		"heal":
+			return "Curacion"
+		"damage":
+			return "Dano"
+		"exp":
+			return "Experiencia"
+		_:
+			return "Carta"
+
+func _card_description(card: Dictionary) -> String:
+	var value: int = int(card.get("value", 0))
+	match str(card.get("type", "")):
+		"essence":
+			return "Otorga %d de esencia de inmediato para ayudarte a invocar o sostener el turno." % value
+		"heal":
+			return "Cura %d puntos de vida a una unidad aliada herida." % value
+		"damage":
+			return "Inflige %d de dano directo a una unidad enemiga que no sea Maestro." % value
+		"exp":
+			return "Otorga %d de experiencia a una unidad aliada para acelerar su progreso." % value
+		_:
+			return "Carta tactica."
+
+func _card_target_text(card: Dictionary) -> String:
+	match str(card.get("type", "")):
+		"essence":
+			return "Objetivo: uso inmediato"
+		"heal":
+			return "Objetivo: unidad aliada herida"
+		"damage":
+			return "Objetivo: unidad enemiga no Maestro"
+		"exp":
+			return "Objetivo: unidad aliada"
+		_:
+			return "Objetivo: variable"
 
 func _card_icon(card: Dictionary) -> String:
 	if card.has("icon"):

@@ -72,6 +72,7 @@ const CLASS_ICON_PATHS := {
 	3: "res://assets/sprites/ui/class_icons/rider_icon.png",
 }
 const MASTER_ICON_PATH := "res://assets/sprites/ui/class_icons/master_icon.png"
+const PLACEMENT_ADVANTAGE_ICON_PATH := "res://assets/sprites/ui/tutorial/ventajas.png"
 const UNIT_TYPE_DISPLAY_NAMES := {
 	-1: "Maestro",
 	0: "Guerrero",
@@ -144,6 +145,8 @@ var _end_turn_motes: Array[Dictionary] = []
 var _btn_last_combat: Button
 var _btn_pause_menu: Button
 var _placement_banner: Panel
+var _placement_hint_icon: TextureRect
+var _lbl_placement_title: Label
 var _lbl_placement: Label
 var _combat_panel: Panel
 var _lbl_cb_title: Label
@@ -183,6 +186,12 @@ var _lbl_tutorial_title: Label
 var _lbl_tutorial_body: Label
 var _btn_tutorial_skip: Button
 var _btn_tutorial_next: Button
+var _tutorial_info_panel: Panel
+var _lbl_tutorial_info_title: Label
+var _lbl_tutorial_info_body: Label
+var _btn_tutorial_info_continue: Button
+var _tutorial_info_advantage_icons: Array[TextureRect] = []
+var _tutorial_info_advantage_arrows: Array[Label] = []
 var _tutorial_panel_outline: TutorialOutline
 var _tutorial_summon_outline: TutorialOutline
 var _tutorial_end_turn_outline: TutorialOutline
@@ -238,6 +247,7 @@ func _ready() -> void:
 	_build_placement_banner()
 	_build_cell_context_panel()
 	_build_tutorial_panel()
+	_build_tutorial_info_panel()
 	_build_combat_panel()
 	hide_unit()
 
@@ -271,6 +281,7 @@ func _process(delta: float) -> void:
 	_update_button_flame(_end_turn_flame, _btn_end_turn, END_TURN_READY_COLOR, _is_button_glow_enabled(_end_turn_glow))
 	_update_button_motes(_summon_motes, _btn_summon, SUMMON_READY_COLOR, _is_button_glow_enabled(_summon_glow))
 	_update_button_motes(_end_turn_motes, _btn_end_turn, END_TURN_READY_COLOR, _is_button_glow_enabled(_end_turn_glow))
+	_update_tutorial_info_diagram()
 	_update_tutorial_arrows()
 
 func set_combat_cinematic(active: bool) -> void:
@@ -704,14 +715,27 @@ func _build_end_turn_button() -> void:
 
 func _build_placement_banner() -> void:
 	_placement_banner = Panel.new()
-	_placement_banner.position = Vector2(390, 600)
-	_placement_banner.size = Vector2(500, 28)
+	_placement_banner.position = Vector2(344, 64)
+	_placement_banner.size = Vector2(592, 86)
 	_placement_banner.visible = false
+	_placement_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_apply_panel_style(_placement_banner, Color(0.06, 0.06, 0.08, 0.88))
 	_root.add_child(_placement_banner)
 
-	_lbl_placement = _make_label("Modo invocacion: elige un hexagono vacio", Vector2(8, 5), HUD_FONT_SIZE_SMALL, Vector2(484, 0), LABEL_COLOR, _placement_banner)
-	_lbl_placement.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_placement_hint_icon = TextureRect.new()
+	_placement_hint_icon.position = Vector2(18, 18)
+	_placement_hint_icon.size = Vector2(48, 48)
+	_placement_hint_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_placement_hint_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_placement_hint_icon.texture = load(PLACEMENT_ADVANTAGE_ICON_PATH)
+	_placement_hint_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_placement_hint_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_placement_banner.add_child(_placement_hint_icon)
+
+	_lbl_placement_title = _make_label("Invocacion", Vector2(84, 12), 12, Vector2(492, 14), LABEL_DIM, _placement_banner)
+	_lbl_placement = _make_label("Elige una unidad y colocala en un hexagono vacio junto a tu Maestro.", Vector2(84, 30), 13, Vector2(482, 40), LABEL_COLOR, _placement_banner)
+	_lbl_placement.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lbl_placement.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 
 func _build_cell_context_panel() -> void:
 	_cell_context_panel = Panel.new()
@@ -788,16 +812,97 @@ func _build_tutorial_panel() -> void:
 	_tutorial_overlay_root.add_child(_tutorial_unit_panel_arrow)
 	_tutorial_cards_arrow = _make_tutorial_arrow()
 	_tutorial_overlay_root.add_child(_tutorial_cards_arrow)
-
 	_tutorial_master_arrow = _make_tutorial_arrow()
 	_tutorial_overlay_root.add_child(_tutorial_master_arrow)
 	_tutorial_tower_arrow = _make_tutorial_arrow()
 	_tutorial_overlay_root.add_child(_tutorial_tower_arrow)
-
 	_tutorial_resources_outline = _make_tutorial_region_outline(Rect2(8, 8, 386, 44))
 	_tutorial_advantage_outline = _make_tutorial_region_outline(Rect2(408, 8, 472, 44))
 	_tutorial_minimap_outline = _make_tutorial_region_outline(Rect2(978, 8, 290, 182))
 	_tutorial_unit_panel_outline = _make_tutorial_region_outline(Rect2(22, 506, 334, 188))
+
+func _build_tutorial_info_panel() -> void:
+	_tutorial_info_panel = Panel.new()
+	_tutorial_info_panel.position = Vector2(300, 210)
+	_tutorial_info_panel.size = Vector2(680, 280)
+	_tutorial_info_panel.visible = false
+	_tutorial_info_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_apply_panel_style(_tutorial_info_panel, Color(0.06, 0.06, 0.09, 0.96))
+	_root.add_child(_tutorial_info_panel)
+
+	_lbl_tutorial_info_title = _make_label("Sistema de ventajas", Vector2(24, 20), 24, Vector2(632, 28), LABEL_COLOR, _tutorial_info_panel)
+
+	_build_tutorial_advantage_diagram(_tutorial_info_panel)
+
+	_lbl_tutorial_info_body = _make_label("", Vector2(212, 74), 18, Vector2(432, 134), LABEL_COLOR, _tutorial_info_panel)
+	_lbl_tutorial_info_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
+	_btn_tutorial_info_continue = _make_button("Entendido", Vector2(492, 226), Vector2(152, 36), HUD_FONT_SIZE_SMALL)
+	_root.remove_child(_btn_tutorial_info_continue)
+	_tutorial_info_panel.add_child(_btn_tutorial_info_continue)
+	_btn_tutorial_info_continue.pressed.connect(func() -> void:
+		emit_signal("tutorial_next_pressed")
+	)
+	_btn_tutorial_info_continue.pressed.connect(AudioManager.play_button)
+
+func _build_tutorial_advantage_diagram(parent: Control) -> void:
+	var diagram := Control.new()
+	diagram.position = Vector2(30, 62)
+	diagram.size = Vector2(160, 160)
+	diagram.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(diagram)
+
+	var warrior := _make_tutorial_advantage_icon(CLASS_ICON_PATHS[0], Vector2(8, 0), UNIT_TYPE_DISPLAY_NAMES[0])
+	var lancer := _make_tutorial_advantage_icon(CLASS_ICON_PATHS[2], Vector2(100, 0), UNIT_TYPE_DISPLAY_NAMES[2])
+	var rider := _make_tutorial_advantage_icon(CLASS_ICON_PATHS[3], Vector2(100, 92), UNIT_TYPE_DISPLAY_NAMES[3])
+	var archer := _make_tutorial_advantage_icon(CLASS_ICON_PATHS[1], Vector2(8, 92), UNIT_TYPE_DISPLAY_NAMES[1])
+	diagram.add_child(warrior)
+	diagram.add_child(lancer)
+	diagram.add_child(rider)
+	diagram.add_child(archer)
+	_tutorial_info_advantage_icons = [warrior, lancer, rider, archer]
+
+	var top_arrow := _make_tutorial_advantage_arrow("->", Vector2(54, 12), Vector2(48, 24), diagram)
+	var right_arrow := _make_tutorial_advantage_arrow("v", Vector2(112, 56), Vector2(28, 28), diagram)
+	var bottom_arrow := _make_tutorial_advantage_arrow("<-", Vector2(54, 104), Vector2(48, 24), diagram)
+	var left_arrow := _make_tutorial_advantage_arrow("^", Vector2(20, 56), Vector2(28, 28), diagram)
+	_tutorial_info_advantage_arrows = [top_arrow, right_arrow, bottom_arrow, left_arrow]
+
+func _make_tutorial_advantage_icon(path: String, pos: Vector2, tooltip: String) -> TextureRect:
+	var icon := TextureRect.new()
+	icon.position = pos
+	icon.size = Vector2(52, 52)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.texture = load(path)
+	icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	icon.modulate = Color(1.0, 1.0, 1.0, 0.92)
+	icon.tooltip_text = tooltip
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return icon
+
+func _make_tutorial_advantage_arrow(text: String, pos: Vector2, size: Vector2, parent: Control) -> Label:
+	var arrow := _make_label(text, pos, 28, size, SUMMON_READY_COLOR, parent)
+	arrow.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	arrow.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	return arrow
+
+func _update_tutorial_info_diagram() -> void:
+	if _tutorial_info_panel == null or not _tutorial_info_panel.visible:
+		return
+	for i: int in range(_tutorial_info_advantage_icons.size()):
+		var icon: TextureRect = _tutorial_info_advantage_icons[i]
+		if icon == null:
+			continue
+		var pulse: float = 0.92 + 0.08 * sin(_ui_fx_time * 2.2 + float(i) * 1.1)
+		icon.scale = Vector2.ONE * pulse
+		icon.modulate = Color(1.0, 1.0, 1.0, 0.82 + 0.18 * pulse)
+	for i: int in range(_tutorial_info_advantage_arrows.size()):
+		var arrow: Label = _tutorial_info_advantage_arrows[i]
+		if arrow == null:
+			continue
+		var glow: float = 0.55 + 0.45 * (0.5 + 0.5 * sin(_ui_fx_time * 3.0 + float(i) * 0.9))
+		arrow.modulate = Color(SUMMON_READY_COLOR.r, SUMMON_READY_COLOR.g, SUMMON_READY_COLOR.b, glow)
 
 func _build_combat_panel() -> void:
 	_combat_panel = Panel.new()
@@ -1563,11 +1668,26 @@ func hide_advantage() -> void:
 	if _lbl_advantage_detail != null:
 		_lbl_advantage_detail.text = ""
 
-func show_placement_hint() -> void:
+func show_placement_hint(message: String = "Modo invocacion: elige un hexagono vacio junto a tu Maestro", unit_type: int = -999) -> void:
+	if _lbl_placement_title != null:
+		_lbl_placement_title.text = "Invocacion"
+	if _placement_hint_icon != null:
+		var icon_path: String = PLACEMENT_ADVANTAGE_ICON_PATH
+		if CLASS_ICON_PATHS.has(unit_type):
+			icon_path = str(CLASS_ICON_PATHS.get(unit_type, PLACEMENT_ADVANTAGE_ICON_PATH))
+		_placement_hint_icon.texture = load(icon_path)
+	if _lbl_placement != null:
+		_lbl_placement.text = message
 	_placement_banner.visible = true
 	_refresh_action_button_glow()
 
 func hide_placement_hint() -> void:
+	if _lbl_placement_title != null:
+		_lbl_placement_title.text = "Invocacion"
+	if _placement_hint_icon != null:
+		_placement_hint_icon.texture = load(PLACEMENT_ADVANTAGE_ICON_PATH)
+	if _lbl_placement != null:
+		_lbl_placement.text = "Elige una unidad y colocala en un hexagono vacio junto a tu Maestro."
 	_placement_banner.visible = false
 	_refresh_action_button_glow()
 
@@ -1603,6 +1723,7 @@ func hide_cell_context() -> void:
 func show_tutorial_step(step_index: int, total_steps: int, title: String, body: String, show_next: bool = false) -> void:
 	if _tutorial_panel == null:
 		return
+	hide_tutorial_info()
 	_lbl_tutorial_step.text = "TUTORIAL %d/%d" % [step_index, total_steps]
 	_lbl_tutorial_title.text = title
 	_lbl_tutorial_body.text = body
@@ -1616,6 +1737,7 @@ func hide_tutorial() -> void:
 	if _tutorial_panel == null:
 		return
 	_tutorial_panel.visible = false
+	hide_tutorial_info()
 	if _btn_tutorial_next != null:
 		_btn_tutorial_next.visible = false
 	if _tutorial_panel_outline != null:
@@ -1624,6 +1746,25 @@ func hide_tutorial() -> void:
 	set_tutorial_focus("")
 	_tutorial_custom_focus_rect = Rect2()
 	_update_tutorial_spotlight("")
+
+func show_tutorial_summon_explanation(unit_name: String, counter_hint: String) -> void:
+	if _tutorial_info_panel == null:
+		return
+	if _tutorial_panel != null:
+		_tutorial_panel.visible = false
+	if _btn_tutorial_next != null:
+		_btn_tutorial_next.visible = false
+	if _lbl_tutorial_info_title != null:
+		_lbl_tutorial_info_title.text = "Sistema de ventajas"
+	if _lbl_tutorial_info_body != null:
+		var body: String = "Invocaste un %s.\n\n%s\n\nUsa este esquema para recordar que cada unidad tiene un objetivo favorable." % [unit_name, counter_hint]
+		_lbl_tutorial_info_body.text = body
+	_tutorial_info_panel.visible = true
+
+func hide_tutorial_info() -> void:
+	if _tutorial_info_panel == null:
+		return
+	_tutorial_info_panel.visible = false
 
 func set_tutorial_focus(target: String) -> void:
 	_tutorial_force_summon_glow = target == "summon"

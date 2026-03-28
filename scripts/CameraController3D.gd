@@ -50,6 +50,8 @@ func set_map_bounds(min_pos: Vector3, max_pos: Vector3) -> void:
 ## Moves camera to a simple above-and-behind view of the combat midpoint.
 ## Returns the Tween so callers can `await tween.finished`.
 func enter_combat_mode(pos_a: Vector3, pos_b: Vector3) -> Tween:
+	if _combat_locked:
+		force_reset_combat_state()
 	print("[Combat] pos_a=", pos_a, " pos_b=", pos_b)
 
 	var mid: Vector3 = (pos_a + pos_b) / 2.0
@@ -123,6 +125,11 @@ func focus_on(world_pos: Vector3, zoom_height: float = -1.0) -> void:
 ## Restores camera to its pre-combat state.
 ## Returns the Tween so callers can `await tween.finished` (duration: COMBAT_TIME).
 func exit_combat_mode() -> Tween:
+	if not _combat_locked:
+		_disable_combat_dof(true)
+		var idle_tween: Tween = create_tween()
+		idle_tween.tween_interval(0.0)
+		return idle_tween
 	if _active_tween != null and _active_tween.is_valid():
 		_active_tween.kill()
 	_disable_combat_dof()
@@ -143,10 +150,29 @@ func exit_combat_mode() -> Tween:
 	)
 	return _active_tween
 
+func force_reset_combat_state(restore_transform: bool = true) -> void:
+	var was_locked: bool = _combat_locked
+	if _active_tween != null and _active_tween.is_valid():
+		_active_tween.kill()
+	if _combat_dof_tween != null and _combat_dof_tween.is_valid():
+		_combat_dof_tween.kill()
+	if restore_transform and was_locked:
+		global_transform = _pre_combat_transform
+		_target_pos = Vector3(_pre_combat_transform.origin.x, 0.0, _pre_combat_transform.origin.z)
+		_target_zoom = _pre_combat_zoom
+		fov = _pre_combat_fov
+	_restore_combat_dof_state(_pre_combat_dof_amount)
+	if _combat_light != null and is_instance_valid(_combat_light):
+		_combat_light.queue_free()
+	_combat_light = null
+	_drag_active = false
+	_combat_locked = false
+
 # ─── Godot callbacks ─────────────────────────────────────────────────────────────
 func _ready() -> void:
 	if attributes == null:
 		attributes = CameraAttributesPractical.new()
+	_pre_combat_fov = fov
 	if attributes is CameraAttributesPractical:
 		_camera_attributes = attributes as CameraAttributesPractical
 		_camera_attributes.dof_blur_amount = 0.0
@@ -269,15 +295,24 @@ func _enable_combat_dof(focus_distance: float) -> void:
 	_combat_dof_tween.tween_property(_camera_attributes, "dof_blur_amount", 0.28, 0.45) \
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 
-func _disable_combat_dof() -> void:
+func _disable_combat_dof(immediate: bool = false) -> void:
 	if _camera_attributes == null:
 		return
 	if _combat_dof_tween != null and _combat_dof_tween.is_valid():
 		_combat_dof_tween.kill()
+	if immediate:
+		_restore_combat_dof_state(_pre_combat_dof_amount)
+		return
 	_combat_dof_tween = create_tween()
 	_combat_dof_tween.tween_property(_camera_attributes, "dof_blur_amount", _pre_combat_dof_amount, 0.35) \
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
 	_combat_dof_tween.tween_callback(func() -> void:
-		_camera_attributes.dof_blur_near_enabled = _pre_combat_near_enabled
-		_camera_attributes.dof_blur_far_enabled = _pre_combat_far_enabled
+		_restore_combat_dof_state(_pre_combat_dof_amount)
 	)
+
+func _restore_combat_dof_state(target_amount: float) -> void:
+	if _camera_attributes == null:
+		return
+	_camera_attributes.dof_blur_amount = target_amount
+	_camera_attributes.dof_blur_near_enabled = _pre_combat_near_enabled
+	_camera_attributes.dof_blur_far_enabled = _pre_combat_far_enabled

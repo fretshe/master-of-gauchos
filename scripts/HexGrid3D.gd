@@ -39,7 +39,7 @@ const TERRAIN_HEIGHTS: Dictionary = {
 	1: 0.04,   # WATER
 	2: 0.60,   # MOUNTAIN
 	3: 0.26,   # FOREST
-	4: 0.10,   # DESERT
+	4: 0.12,   # DESERT
 	5: 0.44,   # VOLCANO
 	6: 0.82,   # CORDILLERA
 }
@@ -973,6 +973,8 @@ func _handle_hover(screen_pos: Vector2) -> void:
 # ─── Click handling ───────────────────────────────────────────────────────────────
 func _handle_click(screen_pos: Vector2) -> void:
 	if _animating:
+		return
+	if GameData.get_player_mode(current_player) == "ai":
 		return
 
 	var cell: Vector2i = _screen_to_cell(screen_pos)
@@ -1954,9 +1956,9 @@ func _animate_tower_income_feedback(tower_root: Node3D, tower: Tower) -> void:
 
 	VFXManager.show_world_text_label(
 		tower_root.global_position + Vector3(0.0, 1.50, 0.0),
-		"+%d ESENCIA" % tower.income,
+		"+%d" % tower.income,
 		glow_color,
-		34,
+		24,
 		0.0
 	)
 

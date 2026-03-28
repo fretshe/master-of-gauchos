@@ -51,6 +51,12 @@ const CLASS_ICON_PATHS := {
 	UnitScript.UnitType.RIDER: "res://assets/sprites/ui/class_icons/rider_icon.png",
 }
 const MASTER_ICON_PATH := "res://assets/sprites/ui/class_icons/master_icon.png"
+const UNIT_DISPLAY_NAMES := {
+	UnitScript.UnitType.WARRIOR: "Guerrero",
+	UnitScript.UnitType.ARCHER: "Arquero",
+	UnitScript.UnitType.LANCER: "Lancero",
+	UnitScript.UnitType.RIDER: "Jinete",
+}
 
 func _ready() -> void:
 	layer = 20
@@ -121,7 +127,7 @@ func _build_ui() -> void:
 
 func _build_card(unit_type: int, rel_pos: Vector2) -> Button:
 	var unit_preview: UnitScript = UnitScript.new()
-	unit_preview.setup(UnitScript.TYPE_NAMES[unit_type], unit_type, _player_id, 1)
+	unit_preview.setup(_get_unit_name(unit_type), unit_type, _player_id, 1)
 	var accent: Color = TYPE_ACCENTS.get(unit_type, Color.WHITE)
 
 	var btn := Button.new()
@@ -239,6 +245,7 @@ func _build_card(unit_type: int, rel_pos: Vector2) -> Button:
 	class_icon.size = Vector2(18.0, 18.0)
 	class_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	class_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	class_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	class_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	class_icon.modulate = Color(0.95, 0.98, 1.0, 0.92)
 	class_icon.texture = load(_get_class_icon_path(unit_type))
@@ -288,8 +295,20 @@ func _build_card(unit_type: int, rel_pos: Vector2) -> Button:
 	var ranged_row := _make_label("R  %s" % _format_dice_row(unit_preview.get_ranged_dice()), Vector2(102.0, 98.0), 11, C_DIM)
 	btn.add_child(ranged_row)
 
-	var counter_row := _make_label(_get_counter_text(unit_type), Vector2(102.0, 114.0), 10, C_MUTED)
-	counter_row.size = Vector2(190.0, 14.0)
+	var counter_icon := TextureRect.new()
+	counter_icon.name = "CounterIcon"
+	counter_icon.position = Vector2(102.0, 112.0)
+	counter_icon.size = Vector2(14.0, 14.0)
+	counter_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	counter_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	counter_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	counter_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	counter_icon.texture = load(_get_class_icon_path(_get_counter_target_unit_type(unit_type)))
+	counter_icon.modulate = Color(0.88, 0.92, 1.0, 0.86)
+	btn.add_child(counter_icon)
+
+	var counter_row := _make_label(_get_counter_text(unit_type), Vector2(120.0, 114.0), 10, C_MUTED)
+	counter_row.size = Vector2(172.0, 14.0)
 	btn.add_child(counter_row)
 
 	var status := _make_label("", Vector2(208.0, 110.0), 11, C_OK)
@@ -347,6 +366,9 @@ func _refresh_cards() -> void:
 		var class_icon := card.get_node_or_null("ClassIcon") as TextureRect
 		if class_icon != null:
 			class_icon.texture = load(_get_class_icon_path(unit_type))
+		var counter_icon := card.get_node_or_null("CounterIcon") as TextureRect
+		if counter_icon != null:
+			counter_icon.texture = load(_get_class_icon_path(_get_counter_target_unit_type(unit_type)))
 
 func _on_card_pressed(unit_type: int) -> void:
 	var cost: int = TYPE_COSTS[unit_type]
@@ -469,7 +491,7 @@ func _make_stat_line(label_text: String, value_text: String, pos: Vector2, accen
 	return root
 
 func _get_unit_name(unit_type: int) -> String:
-	return UnitScript.TYPE_NAMES.get(unit_type, "Unidad")
+	return UNIT_DISPLAY_NAMES.get(unit_type, "Unidad")
 
 func _get_class_icon_path(unit_type: int) -> String:
 	return CLASS_ICON_PATHS.get(unit_type, MASTER_ICON_PATH)
@@ -500,6 +522,12 @@ func _get_counter_text(unit_type: int) -> String:
 		if int(pair[0]) == unit_type:
 			return "Ventaja vs %s" % _get_unit_name(int(pair[1]))
 	return ""
+
+func _get_counter_target_unit_type(unit_type: int) -> int:
+	for pair: Array in UnitScript.COUNTER_CHART:
+		if int(pair[0]) == unit_type:
+			return int(pair[1])
+	return unit_type
 
 func _get_portrait_texture(path: String, unit_type: int = -999, background_variant: bool = false) -> Texture2D:
 	var cache_key: String = "%s|%d|%s" % [path, unit_type, "bg" if background_variant else "main"]
