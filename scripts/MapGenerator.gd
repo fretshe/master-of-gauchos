@@ -230,6 +230,7 @@ func _gen_precordillera() -> void:
 	_carve_cordillera_valleys()
 	_rebalance_precordillera_distribution()
 	_blend_precordillera_biomes()
+	_apply_valley_relief_falloff()
 	_ensure_variety([DESERT, MOUNTAIN, GRASS])
 
 ## Forces at least one cell of each required terrain type if it's missing after
@@ -421,15 +422,29 @@ func _carve_cordillera_valleys() -> void:
 		if nearest_idx >= 0:
 			_carve_corridor_between_valleys(valleys[i], valleys[nearest_idx], rng)
 
+	var lowland_connected: bool = false
+	var fallback_valley: Vector2i = valleys[0] if not valleys.is_empty() else Vector2i(-1, -1)
+	var fallback_x: int = -1
 	for valley: Vector2i in valleys:
 		var front: int = _get_cordillera_band_limit()
+		if valley.x > fallback_x:
+			fallback_x = valley.x
+			fallback_valley = valley
 		if valley.x < int(round(float(front) * 0.55)):
 			continue
 		var exit_target := Vector2i(
-			mini(COLS - 2, _get_mountain_band_limit() + rng.randi_range(0, 1)),
+			mini(COLS - 2, _get_mountain_band_limit() + rng.randi_range(1, 2)),
 			clampi(valley.y + rng.randi_range(-1, 1), 1, ROWS - 2)
 		)
 		_carve_corridor_to_lowlands(valley, exit_target, rng)
+		lowland_connected = true
+
+	if not lowland_connected and fallback_valley != Vector2i(-1, -1):
+		var guaranteed_exit := Vector2i(
+			mini(COLS - 2, _get_mountain_band_limit() + 2),
+			clampi(fallback_valley.y, 1, ROWS - 2)
+		)
+		_carve_corridor_to_lowlands(fallback_valley, guaranteed_exit, rng)
 
 func _carve_valley_ellipse(center: Vector2i, radius_x: int, radius_y: int, rng: RandomNumberGenerator) -> void:
 	for r: int in range(maxi(1, center.y - radius_y - 1), mini(ROWS - 1, center.y + radius_y + 2)):
@@ -446,6 +461,38 @@ func _carve_valley_ellipse(center: Vector2i, radius_x: int, radius_y: int, rng: 
 				continue
 			_terrain[r][c] = GRASS if rng.randf() < 0.78 else FOREST
 			_protected_open_cells[Vector2i(c, r)] = true
+
+func _apply_valley_relief_falloff() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _seed ^ 0x3E11FA11
+	var updates: Dictionary = {}
+	for protected_value: Variant in _protected_open_cells.keys():
+		var protected_cell: Vector2i = protected_value as Vector2i
+		var max_radius: int = 3
+		for r: int in range(maxi(1, protected_cell.y - max_radius), mini(ROWS - 1, protected_cell.y + max_radius + 1)):
+			for c: int in range(maxi(1, protected_cell.x - max_radius), mini(COLS - 1, protected_cell.x + max_radius + 1)):
+				var cell := Vector2i(c, r)
+				if _protected_open_cells.has(cell):
+					continue
+				if _terrain[r][c] != CORDILLERA:
+					continue
+				var dx: int = c - protected_cell.x
+				var dy: int = r - protected_cell.y
+				var dist: int = maxi(absi(dx), absi(dy))
+				if dist <= 0 or dist > max_radius:
+					continue
+				var chance: float = 0.0
+				if dist == 1:
+					chance = 0.15
+				elif dist == 2:
+					chance = 0.05
+				elif dist == 3:
+					chance = 0.01
+				if rng.randf() <= chance:
+					updates[cell] = MOUNTAIN
+	for cell_value: Variant in updates.keys():
+		var cell: Vector2i = cell_value as Vector2i
+		_terrain[cell.y][cell.x] = MOUNTAIN
 
 func _carve_corridor_between_valleys(from_cell: Vector2i, to_cell: Vector2i, rng: RandomNumberGenerator) -> void:
 	var current: Vector2i = from_cell
@@ -624,7 +671,9 @@ func _blend_precordillera_biomes() -> void:
 				elif has_lowland_neighbor and blend_value > 0.78:
 					updates[cell] = FOREST if ((c + r + _seed) % 2 == 0) else GRASS
 			elif has_mountain_neighbor and (current == GRASS or current == FOREST or current == DESERT):
-				if blend_value < 0.24:
+				if blend_value < 0.36:
+					updates[cell] = MOUNTAIN
+				elif c <= _get_mountain_band_limit() + 2 and blend_value < 0.52:
 					updates[cell] = MOUNTAIN
 
 	for cell_value: Variant in updates.keys():
