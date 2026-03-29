@@ -29,6 +29,7 @@ var _map_type: String = "plains"
 var _terrain: Array = []           # Array[Array[int]] — [row][col]
 var _tower_positions: Array = []   # Array[Vector2i]
 var _tower_incomes: Array = []     # Array[int]
+var _protected_open_cells: Dictionary = {}
 var _master_p1: Vector2i = Vector2i(2, 7)
 var _master_p2: Vector2i = Vector2i(21, 8)
 var _master_p3: Vector2i = Vector2i(2, 8)
@@ -43,6 +44,7 @@ func generate(p_seed: int, map_type: String, map_size: Vector2i = Vector2i(24, 1
 	_terrain.clear()
 	_tower_positions.clear()
 	_tower_incomes.clear()
+	_protected_open_cells.clear()
 
 	match map_type:
 		"plains":         _gen_plains()
@@ -225,6 +227,9 @@ func _gen_precordillera() -> void:
 		_terrain.append(row)
 	_soften_precordillera_map()
 	_enforce_precordillera_ridge()
+	_carve_cordillera_valleys()
+	_rebalance_precordillera_distribution()
+	_blend_precordillera_biomes()
 	_ensure_variety([DESERT, MOUNTAIN, GRASS])
 
 ## Forces at least one cell of each required terrain type if it's missing after
@@ -307,25 +312,324 @@ func _enforce_precordillera_ridge() -> void:
 	east_ridge_noise.frequency = 0.14
 	for r: int in range(ROWS):
 		var ridge_bias: float = (ridge_noise.get_noise_2d(0.0, float(r)) + 1.0) * 0.5
-		var west_core: int = int(round(float(COLS) * lerpf(0.16, 0.30, ridge_bias)))
-		var precordillera_end: int = int(round(float(COLS) * lerpf(0.28, 0.42, ridge_bias)))
+		var west_core: int = int(round(float(COLS) * lerpf(0.20, 0.32, ridge_bias)))
+		var cordillera_front: int = _get_cordillera_front_for_row(r)
 		for c: int in range(COLS):
 			var cord_noise: float = (cordillera_noise.get_noise_2d(float(c) * 0.9, float(r) * 0.9) + 1.0) * 0.5
 			var east_noise: float = (east_ridge_noise.get_noise_2d(float(c), float(r)) + 1.0) * 0.5
 			if c == 0:
 				_terrain[r][c] = CORDILLERA
 			elif c <= west_core and _terrain[r][c] != WATER:
-				var cordillera_cut: float = 0.84 + float(c) * 0.06
-				if (c <= 2 and cord_noise > cordillera_cut) or (c == 1 and cord_noise > 0.72):
+				_terrain[r][c] = CORDILLERA
+			elif c <= cordillera_front and _terrain[r][c] != WATER:
+				var front_ratio: float = clampf(float(c) / maxf(1.0, float(cordillera_front)), 0.0, 1.0)
+				var cordillera_cut: float = lerpf(0.24, 0.72, front_ratio)
+				if c <= west_core + 1 or cord_noise >= cordillera_cut:
 					_terrain[r][c] = CORDILLERA
-				elif _terrain[r][c] == CORDILLERA:
+				else:
 					_terrain[r][c] = MOUNTAIN
-			elif c <= precordillera_end and _terrain[r][c] == WATER:
+			elif c <= cordillera_front + 1 and _terrain[r][c] == WATER:
 				_terrain[r][c] = GRASS
 			elif c >= int(float(COLS) * 0.62) and c < int(float(COLS) * 0.90) and east_noise > 0.82:
 				_terrain[r][c] = MOUNTAIN
 			elif c >= int(float(COLS) * 0.78) and _terrain[r][c] == MOUNTAIN and east_noise < 0.70:
 				_terrain[r][c] = DESERT
+	_promote_precordillera_ascent()
+
+func _get_cordillera_front_for_row(row: int) -> int:
+	return _get_cordillera_band_limit()
+
+func _get_cordillera_band_limit() -> int:
+	return clampi(int(floor(float(COLS) * 0.70)), 2, COLS - 3)
+
+func _get_mountain_band_limit() -> int:
+	return clampi(int(floor(float(COLS) * 0.80)), _get_cordillera_band_limit() + 1, COLS - 2)
+
+func _promote_precordillera_ascent() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _seed ^ 0x190C411A
+	var promoted: Array = []
+	for r: int in range(ROWS):
+		var max_band: int = maxi(2, _get_cordillera_front_for_row(r) - 1)
+		for c: int in range(1, mini(COLS - 1, max_band + 1)):
+			var current: int = _terrain[r][c]
+			if current == WATER or current == CORDILLERA or current == MOUNTAIN:
+				continue
+			var adjacent_relief: bool = false
+			for neighbor: Vector2i in _get_hex_neighbors(Vector2i(c, r)):
+				var neighbor_terrain: int = _terrain[neighbor.y][neighbor.x]
+				if neighbor_terrain == CORDILLERA or neighbor_terrain == MOUNTAIN:
+					adjacent_relief = true
+					break
+			if not adjacent_relief:
+				continue
+			if rng.randf() <= 0.90:
+				promoted.append(Vector2i(c, r))
+	for cell: Vector2i in promoted:
+		_terrain[cell.y][cell.x] = MOUNTAIN
+
+func _carve_cordillera_valleys() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _seed ^ 0x6A11E977
+	var valley_count: int = clampi(int(round(float(ROWS) / 4.0)), 4, 7)
+	var valleys: Array[Vector2i] = []
+	var row_spacing: int = maxi(4, int(floor(float(ROWS) / float(valley_count + 1))))
+	for i: int in range(valley_count):
+		var target_row: int = clampi((i + 1) * row_spacing + rng.randi_range(-1, 1), 1, ROWS - 2)
+		var front: int = _get_cordillera_band_limit()
+		var min_x: int = 1
+		var max_x: int = maxi(min_x + 1, int(round(float(front) * 0.72)))
+		var attempts: int = 0
+		var valley_center := Vector2i(rng.randi_range(min_x, max_x), target_row)
+		while attempts < 10:
+			var candidate := Vector2i(rng.randi_range(min_x, max_x), target_row)
+			var too_close: bool = false
+			for existing: Vector2i in valleys:
+				if abs(existing.y - candidate.y) < row_spacing and abs(existing.x - candidate.x) < 6:
+					too_close = true
+					break
+			if not too_close:
+				valley_center = candidate
+				break
+			attempts += 1
+		valleys.append(valley_center)
+		_carve_valley_ellipse(
+			valley_center,
+			rng.randi_range(2, maxi(3, int(round(float(COLS) * 0.04)))),
+			rng.randi_range(2, 3),
+			rng
+		)
+
+	valleys.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return a.y < b.y
+	)
+
+	for i: int in range(valleys.size() - 1):
+		# Keep inter-valley links as single-cell passes.
+		_carve_corridor_between_valleys(valleys[i], valleys[i + 1], rng)
+
+	for i: int in range(1, valleys.size()):
+		var nearest_idx: int = -1
+		var nearest_dist: int = 1 << 30
+		for j: int in range(i):
+			var dx: int = valleys[i].x - valleys[j].x
+			var dy: int = valleys[i].y - valleys[j].y
+			var dist: int = dx * dx + dy * dy
+			if dist < nearest_dist:
+				nearest_dist = dist
+				nearest_idx = j
+		if nearest_idx >= 0:
+			_carve_corridor_between_valleys(valleys[i], valleys[nearest_idx], rng)
+
+	for valley: Vector2i in valleys:
+		var front: int = _get_cordillera_band_limit()
+		if valley.x < int(round(float(front) * 0.55)):
+			continue
+		var exit_target := Vector2i(
+			mini(COLS - 2, _get_mountain_band_limit() + rng.randi_range(0, 1)),
+			clampi(valley.y + rng.randi_range(-1, 1), 1, ROWS - 2)
+		)
+		_carve_corridor_to_lowlands(valley, exit_target, rng)
+
+func _carve_valley_ellipse(center: Vector2i, radius_x: int, radius_y: int, rng: RandomNumberGenerator) -> void:
+	for r: int in range(maxi(1, center.y - radius_y - 1), mini(ROWS - 1, center.y + radius_y + 2)):
+		for c: int in range(maxi(1, center.x - radius_x - 1), mini(COLS - 1, center.x + radius_x + 2)):
+			var terrain_here: int = _terrain[r][c]
+			if terrain_here != CORDILLERA:
+				continue
+			var dx: float = float(c - center.x) / maxf(1.0, float(radius_x))
+			var dy: float = float(r - center.y) / maxf(1.0, float(radius_y))
+			var cave_mask: float = dx * dx + dy * dy
+			if cave_mask > 1.0:
+				continue
+			if cave_mask > 0.88 and rng.randf() < 0.18:
+				continue
+			_terrain[r][c] = GRASS if rng.randf() < 0.78 else FOREST
+			_protected_open_cells[Vector2i(c, r)] = true
+
+func _carve_corridor_between_valleys(from_cell: Vector2i, to_cell: Vector2i, rng: RandomNumberGenerator) -> void:
+	var current: Vector2i = from_cell
+	_carve_1x1_step(current, rng)
+	var guard: int = COLS * ROWS
+	while current != to_cell and guard > 0:
+		guard -= 1
+		var next_cell: Vector2i = current
+		var step_x: int = signi(to_cell.x - current.x)
+		var step_y: int = signi(to_cell.y - current.y)
+		if current.x != to_cell.x:
+			next_cell.x += step_x
+		elif current.y != to_cell.y:
+			next_cell.y += step_y
+		if current.y != to_cell.y and rng.randf() < 0.35:
+			next_cell.y = current.y + step_y
+			if current.x != to_cell.x and rng.randf() < 0.45:
+				next_cell.x = current.x
+		next_cell.x = clampi(next_cell.x, 1, COLS - 2)
+		next_cell.y = clampi(next_cell.y, 1, ROWS - 2)
+		if next_cell == current:
+			break
+		current = next_cell
+		_carve_1x1_step(current, rng)
+
+func _carve_corridor_to_lowlands(from_cell: Vector2i, to_cell: Vector2i, rng: RandomNumberGenerator) -> void:
+	var steps: int = maxi(absi(to_cell.x - from_cell.x), absi(to_cell.y - from_cell.y))
+	if steps <= 0:
+		_carve_2x2_step(from_cell, rng)
+		return
+	for i: int in range(steps + 1):
+		var t: float = float(i) / float(steps)
+		var c: int = int(round(lerpf(float(from_cell.x), float(to_cell.x), t)))
+		var r: int = int(round(lerpf(float(from_cell.y), float(to_cell.y), t)))
+		if i > 0 and i < steps:
+			r = clampi(r + rng.randi_range(-1, 1), 1, ROWS - 2)
+		_carve_2x2_step(Vector2i(c, r), rng)
+
+func _carve_1x1_step(cell: Vector2i, rng: RandomNumberGenerator) -> void:
+	if cell.x < 1 or cell.x >= COLS - 1 or cell.y < 1 or cell.y >= ROWS - 1:
+		return
+	_terrain[cell.y][cell.x] = GRASS if rng.randf() < 0.82 else FOREST
+	_protected_open_cells[cell] = true
+
+func _carve_2x2_step(cell: Vector2i, rng: RandomNumberGenerator) -> void:
+	for dy: int in range(0, 2):
+		for dx: int in range(0, 2):
+			var c: int = cell.x + dx
+			var r: int = cell.y + dy
+			if c < 1 or c >= COLS - 1 or r < 1 or r >= ROWS - 1:
+				continue
+			_terrain[r][c] = GRASS if rng.randf() < 0.82 else FOREST
+			_protected_open_cells[Vector2i(c, r)] = true
+
+func _rebalance_precordillera_distribution() -> void:
+	var cordillera_limit: int = _get_cordillera_band_limit()
+	var mountain_limit: int = _get_mountain_band_limit()
+	var lowland_noise := FastNoiseLite.new()
+	lowland_noise.seed = _seed ^ 0x22B19A4
+	lowland_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	lowland_noise.frequency = 0.14
+	var blend_noise := FastNoiseLite.new()
+	blend_noise.seed = _seed ^ 0x41A77C3
+	blend_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	blend_noise.frequency = 0.09
+	var cordillera_transition: int = maxi(4, int(round(float(COLS) * 0.14)))
+	var mountain_transition: int = maxi(4, int(round(float(COLS) * 0.12)))
+
+	for r: int in range(ROWS):
+		for c: int in range(COLS):
+			var cell := Vector2i(c, r)
+			if _protected_open_cells.has(cell):
+				continue
+			var blend_value: float = (blend_noise.get_noise_2d(float(c), float(r)) + 1.0) * 0.5
+			var lowland_value: float = (lowland_noise.get_noise_2d(float(c), float(r)) + 1.0) * 0.5
+			var terrain_choice: int = -1
+			if c <= cordillera_limit - cordillera_transition:
+				terrain_choice = CORDILLERA
+			elif c <= cordillera_limit + cordillera_transition:
+				var t_cord_to_mountain: float = inverse_lerp(
+					float(cordillera_limit - cordillera_transition),
+					float(cordillera_limit + cordillera_transition),
+					float(c)
+				)
+				var cordillera_strength: float = clampf(1.0 - t_cord_to_mountain + (blend_value - 0.5) * 0.75, 0.0, 1.0)
+				if cordillera_strength >= 0.42:
+					terrain_choice = CORDILLERA
+				elif blend_value >= 0.72 and t_cord_to_mountain > 0.55:
+					terrain_choice = _pick_lowland_terrain(lowland_value)
+				else:
+					terrain_choice = MOUNTAIN
+			elif c <= mountain_limit - mountain_transition:
+				if blend_value < 0.22:
+					terrain_choice = CORDILLERA
+				elif blend_value > 0.78 and c > cordillera_limit + 1:
+					terrain_choice = _pick_lowland_terrain(lowland_value)
+				else:
+					terrain_choice = MOUNTAIN
+			elif c <= mountain_limit + mountain_transition:
+				var t_mountain_to_lowland: float = inverse_lerp(
+					float(mountain_limit - mountain_transition),
+					float(mountain_limit + mountain_transition),
+					float(c)
+				)
+				var mountain_strength: float = clampf(1.0 - t_mountain_to_lowland + (blend_value - 0.5) * 0.70, 0.0, 1.0)
+				if mountain_strength >= 0.44:
+					terrain_choice = MOUNTAIN
+				elif blend_value < 0.18 and c < mountain_limit:
+					terrain_choice = CORDILLERA
+				else:
+					terrain_choice = _pick_lowland_terrain(lowland_value)
+			else:
+				if blend_value < 0.10 and c <= mountain_limit + 1:
+					terrain_choice = MOUNTAIN
+				else:
+					terrain_choice = _pick_lowland_terrain(lowland_value)
+
+			if terrain_choice == -1:
+				terrain_choice = CORDILLERA
+
+			if c <= cordillera_limit:
+				if terrain_choice != CORDILLERA and blend_value < 0.04:
+					terrain_choice = CORDILLERA
+			elif c <= mountain_limit:
+				if terrain_choice != MOUNTAIN and blend_value < 0.03:
+					terrain_choice = MOUNTAIN
+			_terrain[r][c] = terrain_choice
+
+func _pick_lowland_terrain(lowland_value: float) -> int:
+	if lowland_value < 0.18:
+		return DESERT
+	if lowland_value < 0.48:
+		return GRASS
+	if lowland_value < 0.74:
+		return FOREST
+	if lowland_value < 0.82:
+		return WATER
+	return GRASS
+
+func _blend_precordillera_biomes() -> void:
+	var blend_noise := FastNoiseLite.new()
+	blend_noise.seed = _seed ^ 0x5EED123
+	blend_noise.noise_type = FastNoiseLite.TYPE_SIMPLEX
+	blend_noise.frequency = 0.16
+	var updates: Dictionary = {}
+
+	for r: int in range(1, ROWS - 1):
+		for c: int in range(1, COLS - 1):
+			var cell := Vector2i(c, r)
+			if _protected_open_cells.has(cell):
+				continue
+			var current: int = _terrain[r][c]
+			var has_cordillera_neighbor: bool = false
+			var has_mountain_neighbor: bool = false
+			var has_lowland_neighbor: bool = false
+			for neighbor: Vector2i in _get_hex_neighbors(cell):
+				var neighbor_terrain: int = _terrain[neighbor.y][neighbor.x]
+				if neighbor_terrain == CORDILLERA:
+					has_cordillera_neighbor = true
+				elif neighbor_terrain == MOUNTAIN:
+					has_mountain_neighbor = true
+				else:
+					has_lowland_neighbor = true
+
+			var blend_value: float = (blend_noise.get_noise_2d(float(c), float(r)) + 1.0) * 0.5
+			if current == CORDILLERA and has_mountain_neighbor and blend_value > 0.42:
+				updates[cell] = MOUNTAIN
+			elif current == MOUNTAIN:
+				if has_cordillera_neighbor and has_lowland_neighbor:
+					if blend_value < 0.30:
+						updates[cell] = CORDILLERA
+					elif blend_value > 0.72:
+						updates[cell] = GRASS
+				elif has_cordillera_neighbor and blend_value < 0.22:
+					updates[cell] = CORDILLERA
+				elif has_lowland_neighbor and blend_value > 0.78:
+					updates[cell] = FOREST if ((c + r + _seed) % 2 == 0) else GRASS
+			elif has_mountain_neighbor and (current == GRASS or current == FOREST or current == DESERT):
+				if blend_value < 0.24:
+					updates[cell] = MOUNTAIN
+
+	for cell_value: Variant in updates.keys():
+		var cell: Vector2i = cell_value as Vector2i
+		_terrain[cell.y][cell.x] = int(updates[cell])
 
 func _count_neighbors_of_type(col: int, row: int, terrain_type: int) -> int:
 	var count: int = 0
@@ -452,72 +756,78 @@ func _place_towers() -> void:
 func _place_towers_precordillera() -> void:
 	var count: int
 	var min_dist: int
-	var home_per_player: int
 	if COLS <= 12:
-		count = 14; min_dist = 2; home_per_player = 1
+		count = 14; min_dist = 2
 	elif COLS <= 24:
-		count = 28; min_dist = 3; home_per_player = 2
+		count = 28; min_dist = 3
 	elif COLS <= 36:
-		count = 40; min_dist = 3; home_per_player = 2
+		count = 40; min_dist = 3
 	else:
-		count = 56; min_dist = 4; home_per_player = 3
+		count = 56; min_dist = 4
 
 	var rng := RandomNumberGenerator.new()
 	rng.seed = _seed ^ 0x51E772A
 	var min_dist_sq: int = min_dist * min_dist
 	var west_mountain_limit: int = maxi(3, int(round(float(COLS) * 0.36)))
+	var left_half_limit: int = maxi(west_mountain_limit + 1, int(floor(float(COLS - 1) * 0.5)))
 	var east_lowland_start: int = mini(COLS - 3, maxi(west_mountain_limit + 2, int(round(float(COLS) * 0.64))))
+	var west_foothill_limit: int = mini(left_half_limit, east_lowland_start - 1)
+	var reserved_home_towers: int = 4
+	var target_generated_towers: int = maxi(0, count - reserved_home_towers)
+	var max_right_side_total: int = int(floor(float(count) * 0.20))
+	var max_right_generated_towers: int = maxi(0, max_right_side_total - reserved_home_towers)
 
-	var home_anchors: Array[Vector2i] = [
-		Vector2i(COLS - 3, maxi(1, ROWS / 5)),
-		Vector2i(COLS - 3, mini(ROWS - 2, ROWS - 1 - maxi(1, ROWS / 5))),
-		Vector2i(mini(COLS - 3, east_lowland_start + maxi(1, (COLS - east_lowland_start) / 3)), maxi(1, ROWS / 3)),
-		Vector2i(mini(COLS - 3, east_lowland_start + maxi(1, (COLS - east_lowland_start) / 3)), mini(ROWS - 2, (ROWS * 2) / 3)),
-	]
-	var hr_c: int = maxi(2, (COLS - east_lowland_start) / 2)
-	var hr_r: int = maxi(2, ROWS / 5)
-	var home_pools: Array = [[], [], [], []]
 	var mountain_pool: Array = []
-	var foothill_pool: Array = []
-	var fallback_pool: Array = []
+	var west_foothill_pool: Array = []
+	var east_foothill_pool: Array = []
+	var fallback_left_pool: Array = []
+	var fallback_right_pool: Array = []
 
 	for r: int in range(1, ROWS - 1):
 		for c: int in range(1, COLS - 1):
 			if _terrain[r][c] == WATER or _terrain[r][c] == CORDILLERA:
 				continue
 			var cell := Vector2i(c, r)
-			fallback_pool.append(cell)
-			var assigned_home: bool = false
-			for i: int in range(home_anchors.size()):
-				var anchor: Vector2i = home_anchors[i]
-				if absi(c - anchor.x) <= hr_c and absi(r - anchor.y) <= hr_r and c >= east_lowland_start:
-					home_pools[i].append(cell)
-					assigned_home = true
-					break
-			if assigned_home:
-				continue
+			if c <= left_half_limit:
+				fallback_left_pool.append(cell)
+			else:
+				fallback_right_pool.append(cell)
 			if c <= west_mountain_limit and (_terrain[r][c] == MOUNTAIN or _terrain[r][c] == CORDILLERA):
 				mountain_pool.append(cell)
+			elif c <= west_foothill_limit:
+				west_foothill_pool.append(cell)
 			elif c < east_lowland_start:
-				foothill_pool.append(cell)
+				east_foothill_pool.append(cell)
 
 	_tower_positions.clear()
 
-	for i: int in range(home_pools.size()):
-		_shuffle(home_pools[i], rng)
-		_greedy_place(home_pools[i], home_per_player, min_dist_sq)
-
-	var target_mountain_towers: int = mini(count - _tower_positions.size(), int(round(float(count) * 0.55)))
+	var target_mountain_towers: int = mini(target_generated_towers, int(round(float(target_generated_towers) * 0.70)))
 	_shuffle(mountain_pool, rng)
 	_greedy_place(mountain_pool, target_mountain_towers, min_dist_sq)
 
-	_shuffle(foothill_pool, rng)
-	_greedy_place(foothill_pool, count - _tower_positions.size(), min_dist_sq)
+	var target_west_foothill_towers: int = target_generated_towers - _tower_positions.size()
+	_shuffle(west_foothill_pool, rng)
+	_greedy_place(west_foothill_pool, target_west_foothill_towers, min_dist_sq)
 
-	if _tower_positions.size() < count:
+	if max_right_generated_towers > 0 and _tower_positions.size() < target_generated_towers:
+		_shuffle(east_foothill_pool, rng)
+		_greedy_place(
+			east_foothill_pool,
+			mini(target_generated_towers - _tower_positions.size(), max_right_generated_towers),
+			min_dist_sq
+		)
+
+	if _tower_positions.size() < target_generated_towers:
 		var relax_sq: int = maxi(1, (min_dist - 1) * (min_dist - 1))
-		_shuffle(fallback_pool, rng)
-		_greedy_place(fallback_pool, count - _tower_positions.size(), relax_sq)
+		_shuffle(fallback_left_pool, rng)
+		_greedy_place(fallback_left_pool, target_generated_towers - _tower_positions.size(), relax_sq)
+		if max_right_generated_towers > 0 and _tower_positions.size() < target_generated_towers:
+			_shuffle(fallback_right_pool, rng)
+			_greedy_place(
+				fallback_right_pool,
+				mini(target_generated_towers - _tower_positions.size(), max_right_generated_towers),
+				relax_sq
+			)
 
 func _assign_tower_incomes() -> void:
 	_tower_incomes.clear()

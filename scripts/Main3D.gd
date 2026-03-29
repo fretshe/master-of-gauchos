@@ -247,10 +247,14 @@ func _input(event: InputEvent) -> void:
 	if get_tree().paused:
 		if event.keycode == KEY_ESCAPE and hud != null and hud.has_method("is_pause_menu_open") and hud.call("is_pause_menu_open"):
 			_on_pause_resume_pressed()
+		elif event.keycode == KEY_F5:
+			_regenerate_current_map()
 		return
 	if turn_manager != null and GameData.get_player_mode(turn_manager.current_player) == "ai":
 		return
 	match event.keycode:
+		KEY_F5:
+			_regenerate_current_map()
 		KEY_ENTER, KEY_KP_ENTER:
 			_on_end_turn_pressed()
 		KEY_E:
@@ -371,6 +375,17 @@ func _on_pause_save_and_exit_pressed() -> void:
 func _on_pause_restart_pressed() -> void:
 	_set_pause_state(false)
 	GameData.clear_loaded_match_cache()
+	get_tree().reload_current_scene()
+
+func _regenerate_current_map() -> void:
+	_set_pause_state(false)
+	GameData.clear_loaded_match_cache()
+	GameData.map_seed = 0
+	GameData.map_terrain = []
+	GameData.map_tower_positions = []
+	GameData.map_tower_incomes = []
+	GameData.turns_played = 0
+	GameData.winner_id = 0
 	get_tree().reload_current_scene()
 
 func _on_pause_back_to_menu_pressed() -> void:

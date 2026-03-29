@@ -177,6 +177,8 @@ func _input(event: InputEvent) -> void:
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
 	match event.keycode:
+		KEY_F5:
+			_regenerate_current_map()
 		KEY_ENTER, KEY_KP_ENTER:
 			turn_manager.end_turn()
 		KEY_E:
@@ -187,6 +189,16 @@ func _input(event: InputEvent) -> void:
 			hex_grid.exit_placement_mode()
 			hex_grid.exit_master_placement_mode()
 			hex_grid.deselect()
+
+func _regenerate_current_map() -> void:
+	GameData.clear_loaded_match_cache()
+	GameData.map_seed = 0
+	GameData.map_terrain = []
+	GameData.map_tower_positions = []
+	GameData.map_tower_incomes = []
+	GameData.turns_played = 0
+	GameData.winner_id = 0
+	get_tree().reload_current_scene()
 
 # ─── Handlers ──────────────────────────────────────────────────────────────────
 func _open_summon_menu() -> void:
