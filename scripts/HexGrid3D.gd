@@ -150,6 +150,8 @@ var _placement_mode:        bool     = false
 var _placement_type:        int      = -1
 var _placement_player:      int      = 0
 var _placement_master_cell: Vector2i = Vector2i(-1, -1)
+var _placement_preview_renderer: Node3D = null
+var _placement_preview_cell: Vector2i = Vector2i(-1, -1)
 
 # Master free-summon placement mode
 var _master_placement_mode: bool     = false
@@ -289,7 +291,7 @@ func heal_units_on_owned_towers(player_id: int, amount: int = 1) -> int:
 			renderer.call("set_health_bar_values", unit.hp, unit.max_hp, true)
 		VFXManager.show_world_text_label(
 			_get_unit_world_anchor(cell),
-			"Curacion +%d" % amount,
+			"Curación +%d" % amount,
 			Color(0.28, 1.0, 0.36, 1.0),
 			46,
 			1.55
@@ -428,6 +430,7 @@ func exit_placement_mode() -> void:
 	_placement_mode        = false
 	_placement_type        = -1
 	_placement_master_cell = Vector2i(-1, -1)
+	_clear_placement_preview()
 	clear_highlights()
 	_set_selection_focus(false)
 
@@ -447,6 +450,7 @@ func exit_master_placement_mode() -> void:
 	_master_placement_mode = false
 	_master_placement_cell = Vector2i(-1, -1)
 	_placement_type        = -1
+	_clear_placement_preview()
 	clear_highlights()
 	_set_selection_focus(false)
 
@@ -901,6 +905,42 @@ func _is_valid_summon_cell(cell: Vector2i) -> bool:
 	var terrain: int = _map_terrain[cell.y][cell.x]
 	return terrain != Terrain.WATER and terrain != Terrain.CORDILLERA
 
+func _update_placement_preview(cell: Vector2i) -> void:
+	if not _placement_mode and not _master_placement_mode:
+		_clear_placement_preview()
+		return
+	var anchor_cell: Vector2i = _placement_master_cell if _placement_mode else _master_placement_cell
+	if anchor_cell == Vector2i(-1, -1) or cell == Vector2i(-1, -1):
+		_clear_placement_preview()
+		return
+	var adjacent_cells: Array = _get_neighbors(anchor_cell.x, anchor_cell.y)
+	if cell not in adjacent_cells or not _is_valid_summon_cell(cell):
+		_clear_placement_preview()
+		return
+	if _placement_preview_renderer != null and _placement_preview_cell == cell:
+		return
+	_clear_placement_preview()
+	var preview_unit := Unit.new()
+	preview_unit.setup(str(Unit.TYPE_NAMES.get(_placement_type, "Unit")), _placement_type, _placement_player, 1)
+	var preview_renderer: Node3D = UnitRenderer3DScript.new()
+	preview_renderer.call("setup", preview_unit)
+	if preview_renderer.has_method("set_placement_preview_style"):
+		preview_renderer.call("set_placement_preview_style", 0.42)
+	var world_pos: Vector3 = hex_to_world(cell.x, cell.y)
+	var terrain: int = _map_terrain[cell.y][cell.x] as int
+	var hex_top_y: float = TERRAIN_HEIGHTS.get(terrain, 0.12)
+	preview_renderer.position = Vector3(world_pos.x, hex_top_y, world_pos.z)
+	var container: Node3D = units_container if units_container != null else self
+	container.add_child(preview_renderer)
+	_placement_preview_renderer = preview_renderer
+	_placement_preview_cell = cell
+
+func _clear_placement_preview() -> void:
+	_placement_preview_cell = Vector2i(-1, -1)
+	if _placement_preview_renderer != null:
+		_placement_preview_renderer.queue_free()
+		_placement_preview_renderer = null
+
 # ─── Godot callbacks ─────────────────────────────────────────────────────────────
 func _ready() -> void:
 	if GameData.map_terrain.size() > 0:
@@ -949,6 +989,7 @@ func _screen_to_cell(screen_pos: Vector2) -> Vector2i:
 
 func _handle_hover(screen_pos: Vector2) -> void:
 	var cell: Vector2i = _screen_to_cell(screen_pos)
+	_update_placement_preview(cell)
 	if cell == _hovered_cell:
 		return
 	_hovered_cell = cell
@@ -1522,7 +1563,7 @@ func _build_underboard_base() -> void:
 func _place_towers() -> void:
 	var positions: Array
 	var incomes: Array = []
-	if GameData.map_tower_positions.size() > 0:
+	if GameData.map_terrain.size() > 0:
 		positions = GameData.map_tower_positions
 		incomes = GameData.map_tower_incomes
 	else:
@@ -1702,6 +1743,12 @@ func set_combat_team_rings_visible(visible: bool) -> void:
 		var ring: MeshInstance3D = ring_value as MeshInstance3D
 		if ring != null:
 			ring.visible = visible
+
+func set_combat_unit_badges_visible(visible: bool) -> void:
+	for renderer_value: Variant in _unit_renderers.values():
+		var renderer: Node3D = renderer_value as Node3D
+		if renderer != null and renderer.has_method("set_class_badge_visible"):
+			renderer.call("set_class_badge_visible", visible)
 
 func show_combat_stage(attacker_cell: Vector2i, defender_cell: Vector2i, _camera_pos: Vector3 = Vector3.ZERO) -> void:
 	var parent_node: Node = get_parent()

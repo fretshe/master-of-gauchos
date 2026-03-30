@@ -4,6 +4,27 @@ extends Node
 # All VFX nodes (labels, particles) live here so they render above the game world.
 var _canvas: CanvasLayer
 
+const LEVEL_NAME_COLORS := {
+	1: Color(0.85, 0.55, 0.25, 1.0),
+	2: Color(0.80, 0.82, 0.88, 1.0),
+	3: Color(1.00, 0.84, 0.24, 1.0),
+	4: Color(0.28, 0.88, 1.00, 1.0),
+}
+const CLASS_ICON_PATHS := {
+	-1: "res://assets/sprites/ui/class_icons/master_icon.png",
+	0: "res://assets/sprites/ui/class_icons/warrior_icon.png",
+	1: "res://assets/sprites/ui/class_icons/archer_icon.png",
+	2: "res://assets/sprites/ui/class_icons/lancer_icon.png",
+	3: "res://assets/sprites/ui/class_icons/rider_icon.png",
+}
+const UNIT_TYPE_DISPLAY_NAMES := {
+	-1: "Maestro",
+	0: "Guerrero",
+	1: "Arquero",
+	2: "Lancero",
+	3: "Jinete",
+}
+
 func _ready() -> void:
 	_canvas       = CanvasLayer.new()
 	_canvas.layer = 100         # always above 3D viewport and HUD
@@ -343,30 +364,63 @@ func show_combat_hit_label(world_pos: Vector3, hit_index: int, hit_count: int, c
 		2.25
 	)
 
-func create_combat_health_bar(world_pos: Vector3, current_hp: int, max_hp: int) -> Control:
+func create_combat_health_bar(world_pos: Vector3, current_hp: int, max_hp: int, unit_name: String = "", unit_level: int = 1, unit_type: int = -1) -> Control:
 	var bar_root := Control.new()
 	bar_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bar_root.custom_minimum_size = Vector2(180.0, 52.0)
+	bar_root.custom_minimum_size = Vector2(260.0, 122.0)
 	_canvas.add_child(bar_root)
+
+	var header := HBoxContainer.new()
+	header.name = "Header"
+	header.position = Vector2(0.0, -24.0)
+	header.size = Vector2(260.0, 22.0)
+	header.alignment = BoxContainer.ALIGNMENT_CENTER
+	header.add_theme_constant_override("separation", 4)
+	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bar_root.add_child(header)
+
+	var name_icon := TextureRect.new()
+	name_icon.name = "UnitIcon"
+	name_icon.custom_minimum_size = Vector2(18.0, 18.0)
+	name_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	name_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	name_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	name_icon.modulate = LEVEL_NAME_COLORS.get(unit_level, Color.WHITE)
+	var icon_path: String = str(CLASS_ICON_PATHS.get(unit_type, ""))
+	if icon_path != "":
+		name_icon.texture = load(icon_path)
+	header.add_child(name_icon)
+
+	var name_label := Label.new()
+	_style_runtime_label(name_label)
+	name_label.name = "UnitName"
+	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	name_label.add_theme_font_size_override("font_size", 18)
+	name_label.add_theme_color_override("font_color", LEVEL_NAME_COLORS.get(unit_level, Color.WHITE))
+	name_label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.78))
+	name_label.add_theme_constant_override("shadow_offset_x", 1)
+	name_label.add_theme_constant_override("shadow_offset_y", 1)
+	name_label.text = str(UNIT_TYPE_DISPLAY_NAMES.get(unit_type, unit_name))
+	header.add_child(name_label)
 
 	var back := ColorRect.new()
 	back.name = "Back"
 	back.position = Vector2.ZERO
-	back.size = Vector2(180.0, 24.0)
+	back.size = Vector2(260.0, 24.0)
 	back.color = Color(0.03, 0.03, 0.03, 0.86)
 	bar_root.add_child(back)
 
 	var fill := ColorRect.new()
 	fill.name = "Fill"
 	fill.position = Vector2(3.0, 3.0)
-	fill.size = Vector2(174.0, 18.0)
+	fill.size = Vector2(254.0, 18.0)
 	bar_root.add_child(fill)
 
 	var label := Label.new()
 	_style_runtime_label(label)
 	label.name = "Value"
 	label.position = Vector2(0.0, -1.0)
-	label.size = Vector2(180.0, 24.0)
+	label.size = Vector2(260.0, 24.0)
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.add_theme_font_size_override("font_size", 18)
 	label.add_theme_color_override("font_color", Color.WHITE)
@@ -379,7 +433,7 @@ func create_combat_health_bar(world_pos: Vector3, current_hp: int, max_hp: int) 
 	_style_runtime_label(matchup)
 	matchup.name = "Matchup"
 	matchup.position = Vector2(0.0, 24.0)
-	matchup.size = Vector2(180.0, 24.0)
+	matchup.size = Vector2(260.0, 24.0)
 	matchup.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	matchup.add_theme_font_size_override("font_size", 16)
 	matchup.add_theme_color_override("font_color", Color.WHITE)
@@ -388,6 +442,15 @@ func create_combat_health_bar(world_pos: Vector3, current_hp: int, max_hp: int) 
 	matchup.add_theme_constant_override("shadow_offset_y", 1)
 	matchup.text = ""
 	bar_root.add_child(matchup)
+
+	var rolls_root := HBoxContainer.new()
+	rolls_root.name = "Rolls"
+	rolls_root.position = Vector2(0.0, 50.0)
+	rolls_root.size = Vector2(260.0, 46.0)
+	rolls_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rolls_root.alignment = BoxContainer.ALIGNMENT_CENTER
+	rolls_root.add_theme_constant_override("separation", 6)
+	bar_root.add_child(rolls_root)
 
 	update_combat_health_bar(bar_root, world_pos, current_hp, max_hp, false)
 	return bar_root
@@ -400,14 +463,14 @@ func update_combat_health_bar(bar_root: Control, world_pos: Vector3, current_hp:
 		return
 
 	var screen_pos: Vector2 = _combat_bar_screen_pos(cam, world_pos)
-	bar_root.position = screen_pos - Vector2(90.0, 16.0)
+	bar_root.position = screen_pos - Vector2(130.0, 16.0)
 
 	var ratio: float = 0.0 if max_hp <= 0 else clampf(float(current_hp) / float(max_hp), 0.0, 1.0)
 	var fill: ColorRect = bar_root.get_node_or_null("Fill") as ColorRect
 	var label: Label = bar_root.get_node_or_null("Value") as Label
 	if fill != null:
 		fill.color = _combat_health_color(ratio)
-		var target_width: float = maxf(2.0, 174.0 * ratio)
+		var target_width: float = maxf(2.0, 254.0 * ratio)
 		if animate:
 			var tw := fill.create_tween()
 			tw.tween_property(fill, "size:x", target_width, 0.18) \
@@ -438,20 +501,100 @@ func remove_combat_health_bar(bar_root: Control) -> void:
 	if bar_root != null and is_instance_valid(bar_root):
 		bar_root.queue_free()
 
+func show_combat_health_bar_rolls(bar_root: Control, rolls: Array) -> void:
+	if bar_root == null or not is_instance_valid(bar_root):
+		return
+	var rolls_root: Control = bar_root.get_node_or_null("Rolls") as Control
+	if rolls_root == null:
+		return
+
+	for i: int in range(rolls.size()):
+		var roll: Dictionary = rolls[i]
+		var die_color: int = int(roll.get("color", 0))
+		var result: int = int(roll.get("value", 0))
+		var is_critical: bool = bool(roll.get("critical", false))
+		var die_slot := CenterContainer.new()
+		die_slot.custom_minimum_size = Vector2(34.0, 34.0)
+		die_slot.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		die_slot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		rolls_root.add_child(die_slot)
+
+		var die_panel := Panel.new()
+		die_panel.custom_minimum_size = Vector2(30.0, 30.0)
+		die_panel.scale = Vector2(0.7, 0.7)
+		die_panel.modulate.a = 0.0
+		var style := StyleBoxFlat.new()
+		style.bg_color = DICE_COLORS[clampi(die_color, 0, DICE_COLORS.size() - 1)]
+		style.set_corner_radius_all(6)
+		style.set_border_width_all(3)
+		if is_critical:
+			style.border_color = Color(1.0, 0.82, 0.22, 1.0)
+		else:
+			style.border_color = Color(1.0, 1.0, 1.0, 0.60)
+		die_panel.add_theme_stylebox_override("panel", style)
+		die_slot.add_child(die_panel)
+
+		if is_critical:
+			var crit_glow := ColorRect.new()
+			crit_glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			crit_glow.position = Vector2(-2.0, -2.0)
+			crit_glow.size = Vector2(34.0, 34.0)
+			crit_glow.color = Color(0.92, 0.14, 0.10, 0.24)
+			die_panel.add_child(crit_glow)
+			die_panel.move_child(crit_glow, 0)
+
+		var value := Label.new()
+		_style_runtime_label(value)
+		value.text = str(result)
+		value.set_anchors_preset(Control.PRESET_FULL_RECT)
+		value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		value.add_theme_font_size_override("font_size", 18)
+		value.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.95))
+		value.add_theme_constant_override("shadow_offset_x", 1)
+		value.add_theme_constant_override("shadow_offset_y", 1)
+		if is_critical:
+			value.add_theme_color_override("font_color", Color(1.0, 0.90, 0.68))
+		else:
+			value.add_theme_color_override("font_color", Color.WHITE)
+		die_panel.add_child(value)
+
+		var shine := ColorRect.new()
+		shine.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		shine.position = Vector2(4.0, 4.0)
+		shine.size = Vector2(10.0, 4.0)
+		shine.color = Color(1.0, 0.84, 0.52, 0.24) if is_critical else Color(1.0, 1.0, 1.0, 0.18)
+		die_panel.add_child(shine)
+
+		var tw := die_panel.create_tween().set_parallel(true)
+		tw.tween_property(die_panel, "scale", Vector2(1.08, 1.08) if is_critical else Vector2.ONE, 0.10).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		tw.tween_property(die_panel, "modulate:a", 1.0, 0.08)
+		await tw.finished
+
+func clear_combat_health_bar_rolls(bar_root: Control) -> void:
+	if bar_root == null or not is_instance_valid(bar_root):
+		return
+	var rolls_root: Control = bar_root.get_node_or_null("Rolls") as Control
+	if rolls_root == null:
+		return
+	for child: Node in rolls_root.get_children():
+		child.queue_free()
+
 func _combat_health_color(ratio: float) -> Color:
 	if ratio <= 0.25:
 		return Color(1.00, 0.24, 0.24, 0.96)
 	if ratio <= 0.55:
-		return Color(1.00, 0.76, 0.18, 0.96)
-	return Color(0.26, 0.94, 0.42, 0.96)
+		return Color(0.96, 0.36, 0.30, 0.96)
+	return Color(0.90, 0.18, 0.18, 0.96)
 
 func _combat_bar_screen_pos(cam: Camera3D, world_pos: Vector3) -> Vector2:
 	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
 	var anchor_heights: Array[float] = [0.20, 0.12, 0.05, 0.0]
+	var projected_base: Vector3 = Vector3(world_pos.x, 0.0, world_pos.z)
 	var projected: Vector2 = viewport_size * 0.5
 
 	for height: float in anchor_heights:
-		var sample_pos: Vector3 = world_pos + Vector3(0.0, height, 0.0)
+		var sample_pos: Vector3 = projected_base + Vector3(0.0, height, 0.0)
 		if cam.is_position_behind(sample_pos):
 			continue
 		projected = cam.unproject_position(sample_pos)
@@ -850,6 +993,175 @@ func show_dice_roll_3d(world_pos_3d: Vector3, die_color: int, result: int,
 	tw_out.tween_property(panel, "modulate:a", 0.0, 0.35)
 	await tw_out.finished
 	panel.queue_free()
+
+func show_combat_roll_panel_3d(world_from: Vector3, world_to: Vector3, rolls: Array,
+		hit_index: int, hit_count: int, total: int, damage: int) -> void:
+	var cam: Camera3D = get_viewport().get_camera_3d()
+	if cam == null:
+		return
+
+	var screen_from: Vector2 = cam.unproject_position(world_from + Vector3(0.0, 2.0, 0.0))
+	var screen_to: Vector2 = cam.unproject_position(world_to + Vector3(0.0, 2.0, 0.0))
+	var center: Vector2 = screen_from.lerp(screen_to, 0.5)
+	var dice_count: int = maxi(1, rolls.size())
+	var panel_width: float = maxf(280.0, 120.0 + dice_count * 94.0)
+	var panel_height: float = 176.0
+	var viewport_size: Vector2 = get_viewport().get_visible_rect().size
+	center.y += 96.0
+	center.x = clampf(center.x, panel_width * 0.5 + 20.0, viewport_size.x - panel_width * 0.5 - 20.0)
+	center.y = clampf(center.y, panel_height * 0.5 + 20.0, viewport_size.y - panel_height * 0.5 - 20.0)
+
+	var root := Control.new()
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_canvas.add_child(root)
+
+	var shadow := Panel.new()
+	shadow.size = Vector2(panel_width, panel_height)
+	shadow.position = center - shadow.size * 0.5 + Vector2(6.0, 8.0)
+	shadow.modulate = Color(0.0, 0.0, 0.0, 0.38)
+	var shadow_style := StyleBoxFlat.new()
+	shadow_style.bg_color = Color(0.0, 0.0, 0.0, 0.86)
+	shadow_style.set_corner_radius_all(16)
+	shadow.add_theme_stylebox_override("panel", shadow_style)
+	root.add_child(shadow)
+
+	var panel := Panel.new()
+	panel.size = Vector2(panel_width, panel_height)
+	panel.position = center - panel.size * 0.5
+	panel.scale = Vector2(0.92, 0.92)
+	panel.modulate.a = 0.0
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.04, 0.05, 0.08, 0.96)
+	style.border_color = Color(0.50, 0.82, 1.0, 0.70)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(16)
+	panel.add_theme_stylebox_override("panel", style)
+	root.add_child(panel)
+
+	var title := Label.new()
+	_style_runtime_label(title)
+	title.text = "Golpe %d/%d" % [hit_index, hit_count]
+	title.position = Vector2(0.0, 10.0)
+	title.size = Vector2(panel_width, 28.0)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 20)
+	title.add_theme_color_override("font_color", Color(0.92, 0.97, 1.0))
+	panel.add_child(title)
+
+	var subtitle := Label.new()
+	_style_runtime_label(subtitle)
+	subtitle.text = "Tirada de dados"
+	subtitle.position = Vector2(0.0, 34.0)
+	subtitle.size = Vector2(panel_width, 22.0)
+	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	subtitle.add_theme_font_size_override("font_size", 14)
+	subtitle.add_theme_color_override("font_color", Color(0.70, 0.82, 0.92, 0.92))
+	panel.add_child(subtitle)
+
+	var dice_y: float = 64.0
+	var die_size: Vector2 = Vector2(74.0, 74.0)
+	var spacing: float = 16.0
+	var row_width: float = float(dice_count) * die_size.x + float(dice_count - 1) * spacing
+	var start_x: float = (panel_width - row_width) * 0.5
+	var value_labels: Array[Label] = []
+	var die_panels: Array[Panel] = []
+
+	for i: int in range(dice_count):
+		var die_panel := Panel.new()
+		die_panel.size = die_size
+		die_panel.position = Vector2(start_x + float(i) * (die_size.x + spacing), dice_y)
+		die_panel.scale = Vector2(0.5, 0.5)
+		var die_style := StyleBoxFlat.new()
+		var die_color: int = 0
+		if i < rolls.size():
+			var roll: Dictionary = rolls[i]
+			die_color = int(roll.get("color", 0))
+		die_style.bg_color = DICE_COLORS[clampi(die_color, 0, DICE_COLORS.size() - 1)]
+		die_style.border_color = Color(1.0, 1.0, 1.0, 0.72)
+		die_style.set_border_width_all(3)
+		die_style.set_corner_radius_all(14)
+		die_panel.add_theme_stylebox_override("panel", die_style)
+		panel.add_child(die_panel)
+		die_panels.append(die_panel)
+
+		var die_tag := Label.new()
+		_style_runtime_label(die_tag)
+		die_tag.text = DICE_LABELS[clampi(die_color, 0, DICE_LABELS.size() - 1)]
+		die_tag.position = Vector2(7.0, 4.0)
+		die_tag.size = Vector2(24.0, 16.0)
+		die_tag.add_theme_font_size_override("font_size", 13)
+		die_tag.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.92))
+		die_panel.add_child(die_tag)
+
+		var die_value := Label.new()
+		_style_runtime_label(die_value)
+		die_value.text = "?"
+		die_value.set_anchors_preset(Control.PRESET_FULL_RECT)
+		die_value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		die_value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		die_value.add_theme_font_size_override("font_size", 34)
+		die_value.add_theme_color_override("font_color", Color.WHITE)
+		die_panel.add_child(die_value)
+		value_labels.append(die_value)
+
+	var total_label := Label.new()
+	_style_runtime_label(total_label)
+	total_label.text = "Total %d" % total
+	total_label.position = Vector2(28.0, 146.0)
+	total_label.size = Vector2(panel_width * 0.5 - 28.0, 22.0)
+	total_label.add_theme_font_size_override("font_size", 16)
+	total_label.add_theme_color_override("font_color", Color(0.82, 0.90, 1.0))
+	panel.add_child(total_label)
+
+	var damage_label := Label.new()
+	_style_runtime_label(damage_label)
+	if damage > 0:
+		damage_label.text = "Daño %d" % damage
+		damage_label.add_theme_color_override("font_color", Color(1.0, 0.78, 0.58))
+	else:
+		damage_label.text = "Sin daño"
+		damage_label.add_theme_color_override("font_color", Color(0.76, 0.82, 0.90))
+	damage_label.position = Vector2(panel_width * 0.5, 146.0)
+	damage_label.size = Vector2(panel_width * 0.5 - 28.0, 22.0)
+	damage_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	damage_label.add_theme_font_size_override("font_size", 16)
+	panel.add_child(damage_label)
+
+	var intro_tw := panel.create_tween().set_parallel(true)
+	intro_tw.tween_property(panel, "scale", Vector2(1.0, 1.0), 0.14).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	intro_tw.tween_property(panel, "modulate:a", 1.0, 0.10)
+	await intro_tw.finished
+
+	for i: int in range(value_labels.size()):
+		var label: Label = value_labels[i]
+		var die_panel: Panel = die_panels[i]
+		var final_value: int = 0
+		var die_color: int = 0
+		if i < rolls.size():
+			var roll: Dictionary = rolls[i]
+			final_value = int(roll.get("value", 0))
+			die_color = int(roll.get("color", 0))
+		var faces: Array = Unit.DICE.get(die_color, [0, 1, 2, 3])
+		for _j: int in range(8):
+			label.text = str(faces[randi() % faces.size()])
+			await get_tree().create_timer(0.035).timeout
+		label.text = str(final_value)
+		var pulse_tw := die_panel.create_tween().set_parallel(true)
+		pulse_tw.tween_property(die_panel, "scale", Vector2(1.08, 1.08), 0.07).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		pulse_tw.tween_property(die_panel, "modulate", Color(1.18, 1.18, 1.18, 1.0), 0.07)
+		pulse_tw.tween_property(die_panel, "scale", Vector2.ONE, 0.10).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		pulse_tw.tween_property(die_panel, "modulate", Color.WHITE, 0.12)
+		await pulse_tw.finished
+
+	await get_tree().create_timer(0.24).timeout
+
+	var out_tw := panel.create_tween().set_parallel(true)
+	out_tw.tween_property(panel, "position", panel.position + Vector2(0.0, -18.0), 0.18)
+	out_tw.tween_property(panel, "modulate:a", 0.0, 0.18)
+	out_tw.tween_property(shadow, "modulate:a", 0.0, 0.18)
+	await out_tw.finished
+	root.queue_free()
 
 ## Flashes the unit token in `color` for ~0.3 s.
 ## Uses Unit.visual_flash_color + Unit.visual_flash (driven by HexGrid._draw_unit_token).

@@ -32,6 +32,7 @@ const COMBAT_FEEL_BY_TYPE := {
 		"label_color": Color(1.00, 0.84, 0.64),
 	},
 }
+const CRITICAL_CHANCE := 0.12
 
 # ─── Public API ─────────────────────────────────────────────────────────────────
 ## Resolves a combat between attacker and defender using the dice system.
@@ -106,6 +107,8 @@ func resolve_combat(attacker: Unit, defender: Unit,
 		await enter_tw.finished
 		if host != null and host.has_method("set_combat_team_rings_visible"):
 			host.call("set_combat_team_rings_visible", false)
+		if host != null and host.has_method("set_combat_unit_badges_visible"):
+			host.call("set_combat_unit_badges_visible", false)
 		if host != null and host.has_method("show_combat_stage") and atk_cell != Vector2i(-1, -1) and def_cell != Vector2i(-1, -1):
 			host.call("show_combat_stage", atk_cell, def_cell, camera.global_position)
 		if host != null and host.has_method("set_combat_tower_obstruction_fade"):
@@ -117,9 +120,23 @@ func resolve_combat(attacker: Unit, defender: Unit,
 			def_rend.set_combat_mode()
 			def_rend.set_health_bar_values(defender.hp, defender.max_hp, false)
 		if atk_rend != null:
-			atk_hp_bar = VFXManager.create_combat_health_bar(atk_rend.global_position, attacker.hp, attacker.max_hp)
+			atk_hp_bar = VFXManager.create_combat_health_bar(
+				atk_rend.global_position,
+				attacker.hp,
+				attacker.max_hp,
+				str(attacker.unit_name),
+				int(attacker.level),
+				int(attacker.unit_type)
+			)
 		if def_rend != null:
-			def_hp_bar = VFXManager.create_combat_health_bar(def_rend.global_position, defender.hp, defender.max_hp)
+			def_hp_bar = VFXManager.create_combat_health_bar(
+				def_rend.global_position,
+				defender.hp,
+				defender.max_hp,
+				str(defender.unit_name),
+				int(defender.level),
+				int(defender.unit_type)
+			)
 		VFXManager.set_combat_health_bar_matchup(atk_hp_bar, 1 if type_mult > 1.0 else (-1 if type_mult < 1.0 else 0))
 		VFXManager.set_combat_health_bar_matchup(def_hp_bar, 1 if defender_mult > 1.0 else (-1 if defender_mult < 1.0 else 0))
 
@@ -151,7 +168,7 @@ func resolve_combat(attacker: Unit, defender: Unit,
 			atk_result["hit_count"] = attacker_hit_count
 			atk_log.append(atk_result)
 
-			await _animate_dice_attack(atk_result, atk_rend, def_rend, host, attacker.unit_type)
+			await _animate_dice_attack(atk_result, atk_rend, def_rend, atk_hp_bar, host, attacker.unit_type)
 			defender.take_damage(int(atk_result.get("damage", 0)))
 			if def_rend != null:
 				def_rend.set_health_bar_values(defender.hp, defender.max_hp)
@@ -173,7 +190,7 @@ func resolve_combat(attacker: Unit, defender: Unit,
 				atk_result["hit_count"] = attacker_hit_count
 				atk_log.append(atk_result)
 
-				await _animate_dice_attack(atk_result, atk_rend, def_rend, host, attacker.unit_type)
+				await _animate_dice_attack(atk_result, atk_rend, def_rend, atk_hp_bar, host, attacker.unit_type)
 				defender.take_damage(int(atk_result.get("damage", 0)))
 				if def_rend != null:
 					def_rend.set_health_bar_values(defender.hp, defender.max_hp)
@@ -195,7 +212,7 @@ func resolve_combat(attacker: Unit, defender: Unit,
 				def_result["hit_count"] = defender_hit_count
 				def_log.append(def_result)
 
-				await _animate_dice_attack(def_result, def_rend, atk_rend, host, defender.unit_type)
+				await _animate_dice_attack(def_result, def_rend, atk_rend, def_hp_bar, host, defender.unit_type)
 				attacker.take_damage(int(def_result.get("damage", 0)))
 				if atk_rend != null:
 					atk_rend.set_health_bar_values(attacker.hp, attacker.max_hp)
@@ -278,6 +295,8 @@ func _cleanup_visual_state(
 		host.call("hide_combat_stage")
 	if host != null and host.has_method("set_combat_team_rings_visible"):
 		host.call("set_combat_team_rings_visible", true)
+	if host != null and host.has_method("set_combat_unit_badges_visible"):
+		host.call("set_combat_unit_badges_visible", true)
 	if not attacker_died and atk_rend != null:
 		atk_rend.snap_to_world_position(atk_pos)
 		atk_rend.set_combat_focus(false)
@@ -306,15 +325,21 @@ func _cleanup_visual_state(
 func _roll_attack(unit: Unit, dice: Array, type_mult: float, damage_scale: float = 1.0) -> Dictionary:
 	var rolls: Array = []
 	var total: int = 0
+	var has_critical: bool = false
 	for die_color: int in dice:
 		var val: int = unit.roll_dice(die_color)
-		rolls.append({"color": die_color, "value": val})
+		var die_is_critical: bool = val > 0 and randf() < CRITICAL_CHANCE
+		rolls.append({"color": die_color, "value": val, "critical": die_is_critical})
 		total += val
+		if die_is_critical:
+			has_critical = true
 	var damage: int = maxi(0, roundi(float(total) * type_mult * damage_scale))
-	return {"rolls": rolls, "total": total, "damage": damage}
+	if has_critical and damage > 0:
+		damage *= 2
+	return {"rolls": rolls, "total": total, "damage": damage, "critical": has_critical}
 
 
-func _animate_dice_attack(roll_result: Dictionary, src_rend, dst_rend, host: Node, unit_type: int) -> void:
+func _animate_dice_attack(roll_result: Dictionary, src_rend, dst_rend, src_hp_bar: Control, host: Node, unit_type: int) -> void:
 	if host == null:
 		return
 
@@ -336,23 +361,25 @@ func _animate_dice_attack(roll_result: Dictionary, src_rend, dst_rend, host: Nod
 
 	AudioManager.play_attack(unit_type)
 
+	var rolls: Array = roll_result.get("rolls", [])
+	await VFXManager.show_combat_health_bar_rolls(src_hp_bar, rolls)
+
 	var dmg: int = int(roll_result.get("damage", 0))
+	var is_critical: bool = bool(roll_result.get("critical", false))
 	if dmg > 0 and dst_rend != null:
-		var dmg_type: String = "critical" if dmg >= 4 else "damage"
+		if is_critical:
+			AudioManager.play_critical()
+		else:
+			AudioManager.play_hurt()
+		var dmg_type: String = "critical" if is_critical else "damage"
 		VFXManager.show_damage_label(host, dst_rend.position, dmg, dmg_type, true)
 		if src_rend != null:
 			await dst_rend.anim_hit(src_rend.position, host).finished
 	elif dmg == 0 and dst_rend != null:
+		AudioManager.play_dodge()
 		VFXManager.show_damage_label(host, dst_rend.position, 0, "miss", true)
 		if src_rend != null:
 			await dst_rend.anim_dodge(src_rend.position, host).finished
-
-	var src_pos: Vector3 = src_rend.position if src_rend != null else Vector3.ZERO
-	var rolls: Array = roll_result.get("rolls", [])
-	var slot_offset: int = -(rolls.size() - 1) * 35
-	for i: int in range(rolls.size()):
-		var roll: Dictionary = rolls[i]
-		VFXManager.show_dice_roll_3d(src_pos, roll["color"], roll["value"], slot_offset + i * 70)
 
 	await host.get_tree().create_timer(recovery).timeout
 

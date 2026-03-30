@@ -5,6 +5,8 @@ const TutorialOutlineScript := preload("res://scripts/TutorialOutline.gd")
 var turn_manager: Node = null
 var hex_grid: Node = null
 
+signal tutorial_card_target_mode_changed(active: bool)
+
 var _root: Control = null
 var _panel: Panel = null
 var _tutorial_outline: TutorialOutline = null
@@ -12,8 +14,8 @@ var _message_label: Label = null
 var _preview_panel: Panel = null
 var _preview_title: Label = null
 var _preview_value: Label = null
-var _preview_body: Label = null
-var _preview_target: Label = null
+var _preview_body: RichTextLabel = null
+var _preview_target: RichTextLabel = null
 var _slot_nodes: Array[Dictionary] = []
 var _hovered_card_index: int = -1
 var _armed_card_index: int = -1
@@ -168,19 +170,25 @@ func _build_ui() -> void:
 	_preview_value.add_theme_color_override("font_color", Color(1.0, 1.0, 1.0, 0.98))
 	_preview_panel.add_child(_preview_value)
 
-	_preview_body = Label.new()
+	_preview_body = RichTextLabel.new()
 	_preview_body.position = Vector2(18.0, 48.0)
 	_preview_body.size = Vector2(454.0, 60.0)
+	_preview_body.bbcode_enabled = true
+	_preview_body.fit_content = false
+	_preview_body.scroll_active = false
 	_preview_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_preview_body.add_theme_font_size_override("font_size", 16)
-	_preview_body.add_theme_color_override("font_color", Color(0.88, 0.91, 0.98, 0.94))
+	_preview_body.add_theme_font_size_override("normal_font_size", 16)
+	_preview_body.add_theme_color_override("default_color", Color(0.88, 0.91, 0.98, 0.94))
 	_preview_panel.add_child(_preview_body)
 
-	_preview_target = Label.new()
+	_preview_target = RichTextLabel.new()
 	_preview_target.position = Vector2(18.0, 118.0)
 	_preview_target.size = Vector2(454.0, 24.0)
-	_preview_target.add_theme_font_size_override("font_size", 13)
-	_preview_target.add_theme_color_override("font_color", Color(0.70, 0.82, 0.96, 0.92))
+	_preview_target.bbcode_enabled = true
+	_preview_target.fit_content = false
+	_preview_target.scroll_active = false
+	_preview_target.add_theme_font_size_override("normal_font_size", 13)
+	_preview_target.add_theme_color_override("default_color", Color(0.70, 0.82, 0.96, 0.92))
 	_preview_panel.add_child(_preview_target)
 
 	for i: int in range(3):
@@ -270,6 +278,15 @@ func get_tutorial_focus_rect() -> Rect2:
 		return Rect2()
 	return Rect2(_panel.position - Vector2(8.0, 8.0), _panel.size + Vector2(16.0, 16.0))
 
+func get_card_focus_rect(card_index: int) -> Rect2:
+	if card_index < 0 or card_index >= _slot_nodes.size():
+		return get_tutorial_focus_rect()
+	var slot: Dictionary = _slot_nodes[card_index]
+	var panel: Panel = slot.get("panel") as Panel
+	if panel == null or not panel.visible:
+		return get_tutorial_focus_rect()
+	return Rect2(panel.global_position - Vector2(6.0, 6.0), panel.size + Vector2(12.0, 12.0))
+
 func get_card_screen_position(card_index: int) -> Vector2:
 	if card_index < 0 or card_index >= _slot_nodes.size():
 		return Vector2.ZERO
@@ -295,27 +312,32 @@ func _on_card_pressed(card_index: int) -> void:
 	if str(card.get("type", "")) == "essence":
 		CardManager.play_card(player_id, card_index)
 		_armed_card_index = -1
+		emit_signal("tutorial_card_target_mode_changed", false)
 		return
 
 	if hex_grid != null and hex_grid.has_method("enter_card_target_mode"):
 		_armed_card_index = card_index
 		refresh_hand()
 		hex_grid.call("enter_card_target_mode", player_id, card_index, card)
+		emit_signal("tutorial_card_target_mode_changed", true)
 		_show_message("Selecciona una unidad objetivo", _card_color(str(card.get("color", "cyan"))))
 
 func _on_hand_changed(player_id: int) -> void:
 	if turn_manager == null or player_id != turn_manager.current_player:
 		return
 	_armed_card_index = -1
+	emit_signal("tutorial_card_target_mode_changed", false)
 	refresh_hand()
 
 func _on_card_played(_player_id: int, _card: Dictionary) -> void:
 	_armed_card_index = -1
+	emit_signal("tutorial_card_target_mode_changed", false)
 	refresh_hand()
 
 func _on_turn_changed(_player_id: int) -> void:
 	_hovered_card_index = -1
 	_armed_card_index = -1
+	emit_signal("tutorial_card_target_mode_changed", false)
 	refresh_hand()
 
 func _on_card_hovered(card_index: int) -> void:
@@ -351,14 +373,18 @@ func _update_preview(hand: Array, spent: bool) -> void:
 	_preview_title.text = _card_display_name(card)
 	_preview_value.text = str(int(card.get("value", 0)))
 	_preview_value.add_theme_color_override("font_color", card_color.lightened(0.16))
-	_preview_body.text = _card_description(card)
-	_preview_target.text = _card_target_text(card)
+	_preview_body.clear()
+	_preview_body.text = _format_card_preview_rich_text(_card_description(card))
+	_preview_target.clear()
+	_preview_target.text = _format_card_preview_rich_text(_card_target_text(card), true)
+	_preview_target.add_theme_color_override("default_color", Color(card_color.r, card_color.g, card_color.b, 0.92))
 	_preview_panel.visible = true
 
 func _cancel_armed_card() -> void:
 	_armed_card_index = -1
 	if hex_grid != null and hex_grid.has_method("exit_card_target_mode"):
 		hex_grid.call("exit_card_target_mode")
+	emit_signal("tutorial_card_target_mode_changed", false)
 	_show_message("Carta cancelada", Color(0.82, 0.82, 0.88, 1.0))
 	refresh_hand()
 
@@ -394,7 +420,7 @@ func _card_color(color_name: String) -> Color:
 		"cyan":
 			return Color(0.18, 0.82, 0.96, 0.96)
 		"teal":
-			return Color(0.10, 0.74, 0.64, 0.96)
+			return Color(0.34, 0.86, 0.42, 0.96)
 		"red":
 			return Color(0.84, 0.22, 0.22, 0.96)
 		"purple":
@@ -426,9 +452,9 @@ func _card_display_name(card: Dictionary) -> String:
 		"essence":
 			return "Esencia"
 		"heal":
-			return "Curacion"
+			return "Curación"
 		"damage":
-			return "Dano"
+			return "Daño"
 		"exp":
 			return "Experiencia"
 		_:
@@ -442,11 +468,11 @@ func _card_description(card: Dictionary) -> String:
 		"heal":
 			return "Cura %d puntos de vida a una unidad aliada herida." % value
 		"damage":
-			return "Inflige %d de dano directo a una unidad enemiga que no sea Maestro." % value
+			return "Inflige %d de daño directo a una unidad enemiga que no sea Maestro." % value
 		"exp":
 			return "Otorga %d de experiencia a una unidad aliada para acelerar su progreso." % value
 		_:
-			return "Carta tactica."
+			return "Carta táctica."
 
 func _card_target_text(card: Dictionary) -> String:
 	match str(card.get("type", "")):
@@ -460,6 +486,21 @@ func _card_target_text(card: Dictionary) -> String:
 			return "Objetivo: unidad aliada"
 		_:
 			return "Objetivo: variable"
+
+func _format_card_preview_rich_text(text: String, compact: bool = false) -> String:
+	var rich_text: String = text
+	rich_text = rich_text.replace("esencia", "[color=#59d7ff]^ esencia[/color]")
+	rich_text = rich_text.replace("Curación", "[color=#6fe07a]+ Curación[/color]")
+	rich_text = rich_text.replace("curación", "[color=#6fe07a]+ curación[/color]")
+	rich_text = rich_text.replace("Cura", "[color=#6fe07a]+ Cura[/color]")
+	rich_text = rich_text.replace("cura", "[color=#6fe07a]+ cura[/color]")
+	rich_text = rich_text.replace("daño", "[color=#ff6767]X daño[/color]")
+	rich_text = rich_text.replace("Daño", "[color=#ff6767]X Daño[/color]")
+	rich_text = rich_text.replace("experiencia", "[color=#c971ff]XP experiencia[/color]")
+	rich_text = rich_text.replace("Experiencia", "[color=#c971ff]XP Experiencia[/color]")
+	if compact:
+		rich_text = rich_text.replace("Objetivo:", "[color=#b8c7ea]Objetivo:[/color]")
+	return rich_text
 
 func _card_icon(card: Dictionary) -> String:
 	if card.has("icon"):

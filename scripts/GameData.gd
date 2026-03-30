@@ -103,6 +103,8 @@ var map_master_p1:       Vector2i  = Vector2i(1, 3)
 var map_master_p2:       Vector2i  = Vector2i(10, 4)
 var map_master_p3:       Vector2i  = Vector2i(1, 12)
 var map_master_p4:       Vector2i  = Vector2i(10, 12)
+var tutorial_mode_active: bool = false
+var tutorial_chapter_id:  String = ""
 
 # ─── Save path ──────────────────────────────────────────────────────────────────
 const SAVE_PATH := "user://savegame.dat"
@@ -111,6 +113,7 @@ var completed_runs: Array[Dictionary] = []
 var faction_run_counts: Dictionary = {}
 var unlocked_ids: Array[String] = []
 var equipped_unlock_ids: Array[String] = []
+var completed_tutorial_chapters: Array[String] = []
 var selected_font_id: String = "normal"
 var last_completed_run: Dictionary = {}
 var last_new_unlocks: Array[String] = []
@@ -148,6 +151,8 @@ func reset() -> void:
 	map_master_p2       = Vector2i(10, 4)
 	map_master_p3       = Vector2i(1, 12)
 	map_master_p4       = Vector2i(10, 12)
+	tutorial_mode_active = false
+	tutorial_chapter_id = ""
 	loaded_match_state  = {}
 	loaded_scene_path   = DEFAULT_CONTINUE_SCENE_PATH
 	has_loaded_match_state = false
@@ -260,6 +265,17 @@ func apply_selected_font_to_label3d(label: Label3D) -> void:
 		return
 	label.font = selected_font
 
+func mark_tutorial_chapter_completed(chapter_id: String) -> void:
+	if chapter_id == "":
+		return
+	if not completed_tutorial_chapters.has(chapter_id):
+		completed_tutorial_chapters.append(chapter_id)
+		completed_tutorial_chapters.sort()
+		save_meta()
+
+func is_tutorial_chapter_completed(chapter_id: String) -> bool:
+	return completed_tutorial_chapters.has(chapter_id)
+
 # ─── Persistence ────────────────────────────────────────────────────────────────
 func save() -> void:
 	var f: FileAccess = FileAccess.open(SAVE_PATH, FileAccess.WRITE)
@@ -293,6 +309,8 @@ func save() -> void:
 		"map_master_p2":      map_master_p2,
 		"map_master_p3":      map_master_p3,
 		"map_master_p4":      map_master_p4,
+		"tutorial_mode_active": tutorial_mode_active,
+		"tutorial_chapter_id": tutorial_chapter_id,
 		"faction_p1":         faction_p1,
 		"faction_p2":         faction_p2,
 		"faction_p3":         faction_p3,
@@ -332,6 +350,8 @@ func load() -> bool:
 	map_master_p2      = d.get("map_master_p2", Vector2i(10, 4))
 	map_master_p3      = d.get("map_master_p3", Vector2i(1, 12))
 	map_master_p4      = d.get("map_master_p4", Vector2i(10, 12))
+	tutorial_mode_active = bool(d.get("tutorial_mode_active", false))
+	tutorial_chapter_id = str(d.get("tutorial_chapter_id", ""))
 	faction_p1         = d.get("faction_p1", 0)
 	faction_p2         = d.get("faction_p2", 1)
 	faction_p3         = d.get("faction_p3", 0)
@@ -371,6 +391,8 @@ func save_match_in_progress(scene_path: String, match_state: Dictionary) -> void
 		"map_master_p2":       map_master_p2,
 		"map_master_p3":       map_master_p3,
 		"map_master_p4":       map_master_p4,
+		"tutorial_mode_active": tutorial_mode_active,
+		"tutorial_chapter_id": tutorial_chapter_id,
 		"faction_p1":          faction_p1,
 		"faction_p2":          faction_p2,
 		"faction_p3":          faction_p3,
@@ -407,6 +429,7 @@ func save_meta() -> void:
 		"faction_run_counts": faction_run_counts,
 		"unlocked_ids": unlocked_ids,
 		"equipped_unlock_ids": equipped_unlock_ids,
+		"completed_tutorial_chapters": completed_tutorial_chapters,
 		"selected_font_id": selected_font_id,
 	})
 	f.close()
@@ -428,6 +451,7 @@ func load_meta() -> bool:
 	faction_run_counts = d.get("faction_run_counts", {})
 	unlocked_ids = _variant_to_string_array(d.get("unlocked_ids", []))
 	equipped_unlock_ids = _variant_to_string_array(d.get("equipped_unlock_ids", []))
+	completed_tutorial_chapters = _variant_to_string_array(d.get("completed_tutorial_chapters", []))
 	selected_font_id = str(d.get("selected_font_id", "normal"))
 	_prune_invalid_unlock_ids()
 	_prune_invalid_font_id()

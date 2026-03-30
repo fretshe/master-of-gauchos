@@ -21,6 +21,10 @@ func play_turn(player_id: int) -> void:
 		return
 
 	await _wait(AI_TURN_START_DELAY)
+	if _is_scripted_tutorial_enemy(player_id):
+		await _play_scripted_tutorial_turn(player_id)
+		await _wait(AI_TURN_END_DELAY)
+		return
 	await _try_play_best_card(player_id)
 	await _try_summon(player_id)
 
@@ -39,7 +43,32 @@ func play_turn(player_id: int) -> void:
 
 	await _wait(AI_TURN_END_DELAY)
 
+func _play_scripted_tutorial_turn(player_id: int) -> void:
+	var master: Unit = _get_scripted_enemy_master(player_id)
+	if master == null:
+		return
+	if hud != null:
+		hud.show_unit(master)
+
+	var move_target: Vector2i = _get_scripted_enemy_master_target_cell(player_id)
+	var options: Dictionary = hex_grid.get_action_options_for_unit(master)
+	var move_cells: Array = options.get("move_cells", [])
+	if move_target in move_cells:
+		await _wait(AI_PRE_ACTION_DELAY)
+		await hex_grid.execute_ai_move(master, move_target)
+		await _wait(AI_POST_ACTION_DELAY)
+
+	await _try_summon(player_id)
+
 func _choose_next_unit(player_id: int) -> Unit:
+	if _is_scripted_tutorial_enemy(player_id):
+		var scripted_master: Unit = _get_scripted_enemy_master(player_id)
+		if scripted_master != null:
+			var scripted_options: Dictionary = hex_grid.get_action_options_for_unit(scripted_master)
+			var scripted_moves: Array = scripted_options.get("move_cells", [])
+			var scripted_attacks: Array = scripted_options.get("attack_cells", [])
+			if not scripted_moves.is_empty() or not scripted_attacks.is_empty():
+				return scripted_master
 	var units: Array[Unit] = hex_grid.get_units_for_player(player_id)
 	var best_unit: Unit = null
 	var best_score: float = -INF
@@ -121,6 +150,10 @@ func _choose_attack_target(attacker: Unit, attack_cells: Array) -> Unit:
 	return best_target
 
 func _choose_move_target(unit: Unit, move_cells: Array) -> Vector2i:
+	if _is_scripted_tutorial_enemy(unit.owner_id) and unit is Master:
+		var tutorial_cell: Vector2i = _get_scripted_enemy_master_target_cell(unit.owner_id)
+		if tutorial_cell in move_cells:
+			return tutorial_cell
 	var best_cell := Vector2i(-1, -1)
 	var best_score: float = -INF
 	var enemy_cells: Array[Vector2i] = []
@@ -174,10 +207,16 @@ func _try_summon(player_id: int) -> void:
 	if affordable.is_empty():
 		return
 
-	affordable.sort_custom(func(a: int, b: int) -> bool:
-		return int(SummonManagerScript.SUMMON_COSTS[a]) > int(SummonManagerScript.SUMMON_COSTS[b])
-	)
-	var chosen_type: int = int(affordable[0])
+	var chosen_type: int
+	if _is_scripted_tutorial_enemy(player_id):
+		if not affordable.has(UnitScript.UnitType.LANCER):
+			return
+		chosen_type = UnitScript.UnitType.LANCER
+	else:
+		affordable.sort_custom(func(a: int, b: int) -> bool:
+			return int(SummonManagerScript.SUMMON_COSTS[a]) > int(SummonManagerScript.SUMMON_COSTS[b])
+		)
+		chosen_type = int(affordable[0])
 	var chosen_cell: Vector2i = _choose_summon_cell(player_id, summon_cells)
 	if chosen_cell == Vector2i(-1, -1):
 		return
@@ -185,6 +224,8 @@ func _try_summon(player_id: int) -> void:
 		await _wait(AI_POST_SUMMON_DELAY)
 
 func _try_play_best_card(player_id: int) -> void:
+	if _is_scripted_tutorial_enemy(player_id):
+		return
 	if CardManager.used_card_this_turn:
 		return
 	var hand: Array = CardManager.get_hand(player_id)
@@ -255,7 +296,28 @@ func _choose_summon_cell(player_id: int, summon_cells: Array) -> Vector2i:
 	return best_cell
 
 func _wait(seconds: float) -> void:
-	await get_tree().create_timer(seconds).timeout
+	var tree: SceneTree = get_tree()
+	if tree == null and is_instance_valid(hex_grid):
+		tree = hex_grid.get_tree()
+	if tree == null and is_instance_valid(hud):
+		tree = hud.get_tree()
+	if tree == null:
+		return
+	await tree.create_timer(seconds).timeout
+
+func _is_scripted_tutorial_enemy(player_id: int) -> bool:
+	return GameData.tutorial_mode_active and GameData.tutorial_chapter_id == "chapter_1" and player_id == 2
+
+func _get_scripted_enemy_master(player_id: int) -> Unit:
+	for unit: Unit in hex_grid.get_units_for_player(player_id):
+		if unit is Master:
+			return unit
+	return null
+
+func _get_scripted_enemy_master_target_cell(player_id: int) -> Vector2i:
+	if not _is_scripted_tutorial_enemy(player_id):
+		return Vector2i(-1, -1)
+	return Vector2i(7, 3)
 
 func _choose_damage_card_target(player_id: int, value: int) -> Unit:
 	var best_target: Unit = null

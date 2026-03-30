@@ -1,6 +1,7 @@
-extends Control
+﻿extends Control
 
 const SCREEN_SIZE := Vector2(1280.0, 720.0)
+const TITLE_LOGO_PATH := "res://assets/sprites/title/game_logo.png"
 const BG_TOP := Color(0.10, 0.07, 0.12, 1.0)
 const BG_BOTTOM := Color(0.93, 0.58, 0.30, 1.0)
 const SKY_HAZE := Color(1.0, 0.78, 0.58, 0.16)
@@ -121,21 +122,22 @@ func _build_ui() -> void:
 	left_panel.size = Vector2(488.0, 564.0)
 	_apply_panel_style(left_panel, PANEL_BG, PANEL_BORDER)
 	_menu_shell.add_child(left_panel)
-
-	var title := Label.new()
-	title.text = "SUMMONERS\nOF THE ANDES"
-	title.position = Vector2(36.0, 54.0)
-	title.size = Vector2(416.0, 116.0)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	title.add_theme_font_size_override("font_size", 46)
-	title.add_theme_color_override("font_color", GOLD)
-	left_panel.add_child(title)
-
+	var title_logo := TextureRect.new()
+	title_logo.position = Vector2(8.0, 8.0)
+	title_logo.size = Vector2(472.0, 184.0)
+	title_logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	title_logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	title_logo.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	title_logo.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var title_logo_tex: Texture2D = load(TITLE_LOGO_PATH)
+	if title_logo_tex != null:
+		title_logo.texture = title_logo_tex
+	left_panel.add_child(title_logo)
 	var menu_box := VBoxContainer.new()
-	menu_box.position = Vector2(38.0, 222.0)
-	menu_box.size = Vector2(412.0, 326.0)
-	menu_box.add_theme_constant_override("separation", 14)
+	menu_box.position = Vector2(44.0, 184.0)
+	menu_box.size = Vector2(400.0, 324.0)
+	menu_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	menu_box.add_theme_constant_override("separation", 8)
 	left_panel.add_child(menu_box)
 
 	var btn_new := _make_menu_button("Nueva Partida")
@@ -151,6 +153,11 @@ func _build_ui() -> void:
 	_bind_button_description(btn_cont, "Retoma la ultima partida guardada con tu mapa y progreso actuales.")
 	menu_box.add_child(btn_cont)
 
+	var btn_tutorial := _make_menu_button("Tutorial")
+	btn_tutorial.pressed.connect(_on_tutorial)
+	btn_tutorial.pressed.connect(AudioManager.play_menu_button)
+	_bind_button_description(btn_tutorial, "Accede a capítulos guiados para aprender combate, economía e invocación paso a paso.")
+	menu_box.add_child(btn_tutorial)
 	var btn_opts := _make_menu_button("Opciones")
 	btn_opts.pressed.connect(_on_options)
 	btn_opts.pressed.connect(AudioManager.play_menu_button)
@@ -775,6 +782,10 @@ func _on_continue() -> void:
 	GameData.load()
 	get_tree().change_scene_to_file(GameData.loaded_scene_path if GameData.loaded_scene_path != "" else GameData.DEFAULT_CONTINUE_SCENE_PATH)
 
+func _on_tutorial() -> void:
+	var err := get_tree().change_scene_to_file("res://scenes/TutorialMenu.tscn")
+	if err != OK:
+		push_error("[TitleScreen] No se pudo abrir TutorialMenu: %d" % err)
 
 func _on_options() -> void:
 	if _options_overlay == null:

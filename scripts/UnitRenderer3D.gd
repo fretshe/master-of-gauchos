@@ -95,10 +95,7 @@ func set_combat_mode() -> void:
 	_set_class_badge_visible(false)
 	_set_master_aura_visible(false)
 	_set_matchup_indicator_visible(false)
-	if _health_bar_root != null:
-		_health_bar_root.position.y = _sprite_y_combat + 0.62
-		_health_bar_root.rotation = Vector3.ZERO
-	set_health_bar_visible(true)
+	set_health_bar_visible(false)
 
 func set_time_lighting(is_night: bool, moon_strength: float = 0.0) -> void:
 	_is_night_lighting = is_night
@@ -152,6 +149,15 @@ func set_combat_dim(dimmed: bool) -> void:
 func set_combat_obstruction_opacity(opacity: float) -> void:
 	_obstruction_opacity = clampf(opacity, 0.0, 1.0)
 	_apply_obstruction_opacity()
+
+func set_placement_preview_style(opacity: float = 0.45) -> void:
+	_obstruction_opacity = clampf(opacity, 0.0, 1.0)
+	_apply_obstruction_opacity()
+	set_health_bar_visible(false)
+	if _matchup_indicator != null:
+		_matchup_indicator.visible = false
+	if _sel_ring != null:
+		_sel_ring.visible = false
 
 func dim_selection_ring() -> void:
 	if _pulse_tween != null and _pulse_tween.is_valid():
@@ -477,6 +483,9 @@ func _set_matchup_indicator_visible(visible: bool) -> void:
 func set_health_bar_visible(visible: bool) -> void:
 	if _health_bar_root != null:
 		_health_bar_root.visible = visible
+
+func set_class_badge_visible(visible: bool) -> void:
+	_set_class_badge_visible(visible)
 
 func set_health_bar_values(current_hp: int, max_hp: int, animate: bool = true) -> void:
 	if _health_bar_fill == null:
@@ -831,8 +840,8 @@ func _health_color(ratio: float) -> Color:
 	if ratio <= 0.25:
 		return Color(1.00, 0.22, 0.22, 0.96)
 	if ratio <= 0.55:
-		return Color(1.00, 0.76, 0.20, 0.96)
-	return Color(0.28, 0.96, 0.42, 0.96)
+		return Color(0.96, 0.36, 0.30, 0.96)
+	return Color(0.90, 0.18, 0.18, 0.96)
 
 func play_move_landing() -> void:
 	_emit_selection_burst(Color(0.80, 0.94, 1.0), 0.18, 0.78)
