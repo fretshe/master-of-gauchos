@@ -28,6 +28,8 @@ AudioManager="*res://scripts/AudioManager.gd"
 MusicManager="*res://scripts/MusicManager.gd"
 VFXManager="*res://scripts/VFXManager.gd"
 CardManager="*res://scripts/CardManager.gd"
+SettingsManager="*res://scripts/SettingsManager.gd"
+BonusSystem="*res://scripts/BonusSystem.gd"
 
 [display]
 
@@ -41,4 +43,4 @@ enabled=PackedStringArray("res://addons/claude_assistant/plugin.cfg")
 
 [gui]
 
-theme/custom="res://themes/pixel_theme.tres"
+theme/custom="res://themes/pixelon_theme.tres"

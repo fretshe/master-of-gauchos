@@ -14,6 +14,7 @@ const LEVEL_BADGE_COLORS := {
 	UnitScript.Level.BRONZE: Color(0.74, 0.46, 0.22, 0.98),
 	UnitScript.Level.SILVER: Color(0.70, 0.76, 0.84, 0.98),
 	UnitScript.Level.GOLD: Color(0.96, 0.78, 0.22, 0.98),
+	UnitScript.Level.PLATINUM: Color(0.16, 0.58, 0.36, 0.98),
 	UnitScript.Level.DIAMOND: Color(0.44, 0.88, 1.00, 0.98),
 }
 
@@ -26,6 +27,7 @@ var _glow_sprite: Sprite3D = null
 var _shadow_blob: MeshInstance3D = null
 var _master_aura: MeshInstance3D = null
 var _matchup_indicator: Label3D = null
+var _status_indicator: Label3D = null
 var _class_badge_root: Node3D = null
 var _class_badge_shadow: Sprite3D = null
 var _class_badge_glow: Sprite3D = null
@@ -47,6 +49,7 @@ var _is_night_lighting: bool = false
 var _moon_strength: float = 0.0
 var _bound_unit = null
 var _cached_level: int = -1
+var _cached_defense_buff: int = -1
 var _fx_time: float = 0.0
 var _obstruction_opacity: float = 1.0
 
@@ -67,15 +70,18 @@ func setup(unit, _camera = null) -> void:
 	_build_class_badge(unit)
 	_build_master_aura()
 	_build_matchup_indicator()
+	_build_status_indicator()
 	set_health_bar_values(unit.hp, unit.max_hp, false)
 
 func _process(delta: float) -> void:
 	_fx_time += delta
 	_refresh_badge_from_bound_unit()
+	_refresh_status_indicator()
 	_update_master_aura()
 
 func set_tactical_mode() -> void:
 	scale = _tactical_scale
+	set_sprite_mirror(false)
 	if _sprite != null:
 		_sprite.position.y = _sprite_y_tactical
 	if _glow_sprite != null:
@@ -83,6 +89,8 @@ func set_tactical_mode() -> void:
 	_set_class_badge_visible(true)
 	_set_master_aura_visible(is_master)
 	_set_matchup_indicator_visible(_matchup_indicator != null and _matchup_indicator.text != "")
+	if _status_indicator != null:
+		_status_indicator.visible = _cached_defense_buff > 0
 	set_health_bar_visible(false)
 
 func set_combat_mode() -> void:
@@ -95,7 +103,15 @@ func set_combat_mode() -> void:
 	_set_class_badge_visible(false)
 	_set_master_aura_visible(false)
 	_set_matchup_indicator_visible(false)
+	if _status_indicator != null:
+		_status_indicator.visible = false
 	set_health_bar_visible(false)
+
+func set_sprite_mirror(mirrored: bool) -> void:
+	if _sprite != null:
+		_sprite.flip_h = mirrored
+	if _glow_sprite != null:
+		_glow_sprite.flip_h = mirrored
 
 func set_time_lighting(is_night: bool, moon_strength: float = 0.0) -> void:
 	_is_night_lighting = is_night
@@ -142,7 +158,7 @@ func set_combat_focus(focused: bool) -> void:
 	_combat_base_scale = target
 
 func set_combat_dim(dimmed: bool) -> void:
-	var alpha := 0.40 if dimmed else 1.0
+	var alpha := 0.18 if dimmed else 1.0
 	if _sprite != null:
 		create_tween().tween_property(_sprite, "modulate:a", alpha * _obstruction_opacity, 0.20)
 
@@ -267,6 +283,9 @@ func _apply_obstruction_opacity() -> void:
 	if _matchup_indicator != null:
 		var color: Color = _matchup_indicator.modulate
 		_matchup_indicator.modulate = Color(color.r, color.g, color.b, _obstruction_opacity)
+	if _status_indicator != null:
+		var status_color: Color = _status_indicator.modulate
+		_status_indicator.modulate = Color(status_color.r, status_color.g, status_color.b, _obstruction_opacity)
 
 func anim_lunge(target_pos: Vector3, host: Node) -> Tween:
 	if _motion_tween != null and _motion_tween.is_valid():
@@ -300,6 +319,32 @@ func anim_attack_anticipation(host: Node, intensity: float = 1.0, duration: floa
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
 	return tw
 
+func anim_super_critical_charge(host: Node, intensity: float = 1.0, duration: float = 0.34) -> Tween:
+	if _motion_tween != null and _motion_tween.is_valid():
+		_motion_tween.kill()
+	var base_scale := _combat_base_scale if _combat_base_scale != Vector3.ZERO else scale
+	var origin := position
+	var lift := origin + Vector3(0.0, 0.10 * intensity, 0.0)
+	var windup_scale := Vector3(base_scale.x * 0.88, base_scale.y * 1.16, base_scale.z * 0.88)
+	var tw := host.create_tween()
+	_motion_tween = tw
+	tw.tween_property(self, "position", lift, duration * 0.30) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(self, "scale", windup_scale, duration * 0.30) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	for i: int in range(8):
+		var shake_x: float = 0.022 * intensity * (-1.0 if i % 2 == 0 else 1.0)
+		tw.tween_property(self, "position:x", origin.x + shake_x, duration * 0.05) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	tw.tween_property(self, "position:x", origin.x, duration * 0.07) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	tw.tween_interval(duration * 0.18)
+	tw.tween_property(self, "position", origin, duration * 0.20) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	tw.parallel().tween_property(self, "scale", base_scale, duration * 0.20) \
+		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+	return tw
+
 func anim_hit(attacker_pos: Vector3, host: Node) -> Tween:
 	if _motion_tween != null and _motion_tween.is_valid():
 		_motion_tween.kill()
@@ -316,6 +361,24 @@ func anim_hit(attacker_pos: Vector3, host: Node) -> Tween:
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	_flash_color_async(Color(1.0, 0.10, 0.10), host)
 	_emit_impact_burst(Color(1.00, 0.84, 0.36), 0.22)
+	return tw
+
+func anim_super_critical_hit(attacker_pos: Vector3, host: Node) -> Tween:
+	if _motion_tween != null and _motion_tween.is_valid():
+		_motion_tween.kill()
+	var dir := position - attacker_pos
+	dir.y = 0.0
+	dir = dir.normalized() if dir.length_squared() > 0.001 else Vector3.BACK
+	var origin := position
+	var launch := origin + dir * 0.16 + Vector3(0.0, 0.42, 0.0)
+	var tw := host.create_tween()
+	_motion_tween = tw
+	tw.tween_property(self, "position", launch, 0.10) \
+		.set_trans(Tween.TRANS_EXPO).set_ease(Tween.EASE_OUT)
+	tw.tween_property(self, "position", origin, 0.22) \
+		.set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+	_flash_color_async(Color(1.0, 0.04, 0.04), host)
+	_emit_impact_burst(Color(1.00, 0.16, 0.16), 0.30)
 	return tw
 
 func anim_dodge(attacker_pos: Vector3, host: Node) -> Tween:
@@ -460,6 +523,35 @@ func _build_matchup_indicator() -> void:
 	_matchup_indicator.text = ""
 	GameData.apply_selected_font_to_label3d(_matchup_indicator)
 	add_child(_matchup_indicator)
+
+func _build_status_indicator() -> void:
+	_status_indicator = Label3D.new()
+	_status_indicator.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_status_indicator.no_depth_test = true
+	_status_indicator.font_size = 18
+	_status_indicator.outline_size = 6
+	_status_indicator.modulate = Color(0.18, 0.84, 0.76, _obstruction_opacity)
+	_status_indicator.position = Vector3(0.0, 1.22 if is_master else 1.02, 0.0)
+	_status_indicator.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_status_indicator.text = ""
+	_status_indicator.visible = false
+	GameData.apply_selected_font_to_label3d(_status_indicator)
+	add_child(_status_indicator)
+
+func _refresh_status_indicator() -> void:
+	if _bound_unit == null or _status_indicator == null:
+		return
+	var defense_buff: int = int(_bound_unit.defense_buff)
+	if defense_buff == _cached_defense_buff:
+		return
+	_cached_defense_buff = defense_buff
+	if defense_buff > 0:
+		_status_indicator.text = "DEF +%d" % defense_buff
+		_status_indicator.modulate = Color(0.18, 0.84, 0.76, _obstruction_opacity)
+		_status_indicator.visible = true
+	else:
+		_status_indicator.text = ""
+		_status_indicator.visible = false
 
 func set_matchup_indicator(state: int) -> void:
 	if _matchup_indicator == null:
@@ -800,6 +892,8 @@ func _level_up_label_text(level: int) -> String:
 			return "PLATA"
 		UnitScript.Level.GOLD:
 			return "ORO"
+		UnitScript.Level.PLATINUM:
+			return "PLATINO"
 		UnitScript.Level.DIAMOND:
 			return "DIAMANTE"
 		_:

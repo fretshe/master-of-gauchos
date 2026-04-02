@@ -23,9 +23,9 @@ func print_balance_report() -> void:
 
 
 func _print_unit_family(unit_type: int, label: String, is_master: bool = false) -> void:
-	var levels: Array[int] = [Unit.Level.BRONZE, Unit.Level.SILVER, Unit.Level.GOLD]
+	var levels: Array[int] = [Unit.Level.BRONZE, Unit.Level.SILVER, Unit.Level.GOLD, Unit.Level.PLATINUM, Unit.Level.DIAMOND]
 	if is_master:
-		levels = [Unit.Level.GOLD, Unit.Level.DIAMOND]
+		levels = [Unit.Level.GOLD, Unit.Level.PLATINUM, Unit.Level.DIAMOND]
 
 	for level: int in levels:
 		var unit = _build_sample_unit(unit_type, level, is_master)
@@ -102,6 +102,8 @@ func _level_name(level: int) -> String:
 			return "Plata"
 		Unit.Level.GOLD:
 			return "Oro"
+		Unit.Level.PLATINUM:
+			return "Platino"
 		Unit.Level.DIAMOND:
 			return "Diamante"
 		_:

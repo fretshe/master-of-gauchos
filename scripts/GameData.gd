@@ -1,8 +1,8 @@
 extends Node
 
 const META_SAVE_PATH := "user://meta_progression.dat"
-const BUILD_VERSION_LABEL := "Beta 0.1.1"
-const BUILD_VERSION_CODE := "0.1.1"
+const BUILD_VERSION_LABEL := "Beta 0.2.2"
+const BUILD_VERSION_CODE := "0.2.2"
 const FONT_OPTIONS := {
 	"normal": {
 		"label": "Normal",
@@ -16,63 +16,203 @@ const FONT_OPTIONS := {
 	},
 }
 const PATCH_NOTES := {
-	"version": "Beta 0.1.1",
-	"title": "Primer build con continuidad entre partidas",
-	"date": "2026-03-27",
+	"version": "Beta 0.2.2",
+	"title": "Pulido de tablero, feedback visual y legibilidad de movimiento",
+	"date": "2026-04-02",
 	"sections": [
 		{
 			"title": "Novedades",
 			"items": [
-				"Nuevo sistema de guardado durante la partida.",
-				"Se agrego la opcion Guardar y salir en el menu de pausa.",
-				"Continuar desde el menu principal ahora recupera una partida valida en progreso.",
-				"Se implemento la primera capa de progresion meta con desbloqueos entre partidas.",
+				"Las casillas de movimiento ahora muestran un contorno exterior amarillo para leer mejor el area alcanzable desde cualquier angulo.",
+				"El nuevo borde de movimiento suma una respiracion suave de brillo para marcar recorrido sin ensuciar el tablero.",
+				"Se corrigio un problema visual que dejaba algunas casillas de bosque restauradas con un tono mas oscuro despues de usar highlights.",
+				"Se siguio puliendo la presentacion del tablero para que la lectura de seleccion, movimiento y altura sea mas clara.",
 			],
 		},
 		{
-			"title": "Balance y contenido",
+			"title": "Terreno y tablero",
 			"items": [
-				"Se incorporo el ejemplo de desbloqueo Alijo Gaucho.",
-				"Al jugar 5 partidas con Gauchos como Jugador 1 se habilita una carta especial para futuras runs.",
+				"El bosque recupera mejor su color base real al encender y apagar efectos visuales de seleccion o movimiento.",
+				"Se suavizo la respuesta del bosque a las sombras para evitar lecturas demasiado oscuras, especialmente en situaciones de foco visual.",
+				"El sistema de resaltado ya no depende solo de apagar el resto del tablero para mostrar casillas validas.",
+				"Se corrigieron inconsistencias visuales entre casillas de distinta altura al dibujar informacion sobre sus bordes.",
 			],
 		},
 		{
-			"title": "Arreglos",
+			"title": "Combate y cartas",
 			"items": [
-				"Se corrigio la restauracion visual del estado al continuar una partida guardada.",
-				"Se repararon los retratos del menu de invocacion en las builds exportadas.",
-				"Se actualizo el nombre oficial del proyecto a Summoners of the Andes.",
+				"Las cartas ahora anuncian mejor sus efectos con una telegraphica previa y proyectiles mas lentos y visibles.",
+				"Se siguio reforzando la lectura de los efectos de combate para que no aparezcan de golpe sobre el campo.",
+				"Los proyectiles y efectos asociados ganaron presencia visual para no perderse entre unidades y terreno.",
+				"Se mantuvo el trabajo de pulido sobre super criticos, seleccion y respuesta visual general del combate.",
 			],
 		},
 		{
-			"title": "En foco",
+			"title": "Presentacion general",
 			"items": [
-				"Seguir expandiendo desbloqueos, cartas de faccion y balance general de combate.",
+				"Se continuo afinando la interfaz para que Summoners of the Andes gane coherencia visual entre tablero, menu y feedback de partida.",
+				"El equipo de color, brillo y contraste del tablero fue recalibrado para priorizar lectura tactica sin perder atmosfera.",
+				"El parche sigue consolidando el cambio de identidad visual y de lenguaje del juego alrededor de Summoners of the Andes.",
+				"Se sumaron mas retoques de estabilidad y pulido general en sistemas ya incorporados durante la beta 0.2.",
 			],
 		},
 	],
 }
 const MAX_RUN_HISTORY := 24
+const MAX_EQUIPPED_EXTRA_FACTION_CARDS := 6
 const UNLOCK_DEFS := {
-	"gaucho_opening_cache": {
-		"name": "Alijo Gaucho",
-		"description": "Juega 5 partidas con Gauchos como Jugador 1. Desbloquea una carta especial de apertura para mazos gauchos.",
+	"gaucho_fogon_gaucho": {
+		"name": "Fogón Gaucho",
+		"description": "Completá 3 partidas con Gauchos como Jugador 1. Cuenta tanto ganar como perder. Desbloquea Fogón Gaucho para futuros mazos gauchos.",
 		"faction": 0,
-		"required_runs": 5,
+		"required_runs": 3,
 		"reward_cards": [
-			{
-				"type": "essence",
-				"value": 6,
-				"color": "gold",
-				"label": "LEG",
-				"icon": "G",
-				"display_name": "Fogon Gaucho",
-			},
+			{"type": "essence", "value": 6, "color": "gold",
+			 "label": "LEG", "icon": "G",
+			 "display_name": "Fogón Gaucho",
+			 "description": "Obtené +6 de esencia.",
+			 "art_path": "res://assets/sprites/cards/gauchos/fogon_gaucho.png"},
+		],
+	},
+	"gaucho_descanso": {
+		"name": "Descanso",
+		"description": "Completá 6 partidas con Gauchos como Jugador 1. Cuenta tanto ganar como perder. Desbloquea Descanso para futuros mazos gauchos.",
+		"faction": 0,
+		"required_runs": 6,
+		"reward_cards": [
+			{"type": "refresh", "value": 0, "color": "gold",
+			 "label": "LEG", "icon": "↻",
+			 "display_name": "Descanso",
+			 "description": "Refrescá una unidad aliada para que actúe nuevamente.",
+			 "art_path": "res://assets/sprites/cards/gauchos/descanso.png"},
+		],
+	},
+	"gaucho_cuchillo_criollo": {
+		"name": "Cuchillo criollo",
+		"description": "Completá 9 partidas con Gauchos como Jugador 1. Cuenta tanto ganar como perder. Desbloquea Cuchillo criollo para futuros mazos gauchos.",
+		"faction": 0,
+		"required_runs": 9,
+		"reward_cards": [
+			{"type": "faction", "effect": "damage", "value": 4, "color": "gold",
+			 "display_name": "Cuchillo criollo",
+			 "description": "-4 HP a una unidad enemiga.",
+			 "art_path": "res://assets/sprites/cards/gauchos/cuchillo_criollo.png"},
+		],
+	},
+	"militar_bombardeo": {
+		"name": "Bombardeo",
+		"description": "Completá 3 partidas con Militares como Jugador 1. Cuenta tanto ganar como perder. Desbloquea Bombardeo para futuros mazos militares.",
+		"faction": 1,
+		"required_runs": 3,
+		"reward_cards": [
+			{"type": "faction", "effect": "damage", "value": 7, "color": "gold",
+			 "display_name": "Bombardeo",
+			 "description": "-7 HP a una unidad enemiga."},
+		],
+	},
+	"militar_fuego_cobertura": {
+		"name": "Fuego de cobertura",
+		"description": "Completá 6 partidas con Militares como Jugador 1. Cuenta tanto ganar como perder. Desbloquea Fuego de cobertura para futuros mazos militares.",
+		"faction": 1,
+		"required_runs": 6,
+		"reward_cards": [
+			{"type": "faction", "effect": "aoe_damage", "value": 3, "color": "gold",
+			 "display_name": "Fuego de cobertura",
+			 "description": "-3 HP a todas las unidades enemigas adyacentes a tus torres."},
+		],
+	},
+	"militar_llamada_refuerzos": {
+		"name": "Llamada de refuerzos",
+		"description": "Completá 9 partidas con Militares como Jugador 1. Cuenta tanto ganar como perder. Desbloquea Llamada de refuerzos para futuros mazos militares.",
+		"faction": 1,
+		"required_runs": 9,
+		"reward_cards": [
+			{"type": "faction", "effect": "free_summon", "value": 0, "color": "gold",
+			 "display_name": "Llamada de refuerzos",
+			 "description": "Invocá una unidad nivel 1 sin costo de esencia."},
+		],
+	},
+	"indio_circulo_sagrado": {
+		"name": "Círculo sagrado",
+		"description": "Completá 3 partidas con Nativos como Jugador 1. Cuenta tanto ganar como perder. Desbloquea Círculo sagrado para futuros mazos nativos.",
+		"faction": 2,
+		"required_runs": 3,
+		"reward_cards": [
+			{"type": "faction", "effect": "heal_all", "value": 2, "color": "gold",
+			 "display_name": "Círculo sagrado",
+			 "description": "Curá +2 HP a todas las unidades aliadas."},
+		],
+	},
+	"indio_torre_sagrada": {
+		"name": "Torre sagrada",
+		"description": "Completá 6 partidas con Nativos como Jugador 1. Cuenta tanto ganar como perder. Desbloquea Torre sagrada para futuros mazos nativos.",
+		"faction": 2,
+		"required_runs": 6,
+		"reward_cards": [
+			{"type": "faction", "effect": "tower_heal", "value": 1, "color": "gold",
+			 "display_name": "Torre sagrada",
+			 "description": "Tus torres curan +1 HP extra a unidades aliadas en su hexágono."},
+		],
+	},
+	"indio_totem_guerra": {
+		"name": "Tótem de guerra",
+		"description": "Completá 9 partidas con Nativos como Jugador 1. Cuenta tanto ganar como perder. Desbloquea Tótem de guerra para futuros mazos nativos.",
+		"faction": 2,
+		"required_runs": 9,
+		"reward_cards": [
+			{"type": "faction", "effect": "exp", "value": 4, "color": "gold",
+			 "display_name": "Tótem de guerra",
+			 "description": "+4 exp a una unidad aliada."},
+		],
+	},
+	"brujo_transmutacion": {
+		"name": "Transmutación",
+		"description": "Completá 3 partidas con Brujos como Jugador 1. Cuenta tanto ganar como perder. Desbloquea Transmutación para futuros mazos brujos.",
+		"faction": 3,
+		"required_runs": 3,
+		"reward_cards": [
+			{"type": "faction", "effect": "swap_hp", "value": 0, "color": "gold",
+			 "display_name": "Transmutación",
+			 "description": "Intercambiá el HP de una unidad enemiga con el de tu Maestro."},
+		],
+	},
+	"brujo_resurreccion": {
+		"name": "Resurrección",
+		"description": "Completá 6 partidas con Brujos como Jugador 1. Cuenta tanto ganar como perder. Desbloquea Resurrección para futuros mazos brujos.",
+		"faction": 3,
+		"required_runs": 6,
+		"reward_cards": [
+			{"type": "faction", "effect": "revive", "value": 0, "color": "gold",
+			 "display_name": "Resurrección",
+			 "description": "Devolvé tu última unidad muerta con 50% de HP."},
+		],
+	},
+	"brujo_caos_total": {
+		"name": "Caos total",
+		"description": "Completá 9 partidas con Brujos como Jugador 1. Cuenta tanto ganar como perder. Desbloquea Caos total para futuros mazos brujos.",
+		"faction": 3,
+		"required_runs": 9,
+		"reward_cards": [
+			{"type": "faction", "effect": "random", "value": 0, "color": "gold",
+			 "display_name": "Caos total",
+			 "description": "Efecto aleatorio: daño, curación, esencia o exp a unidad aleatoria."},
 		],
 	},
 }
 
-# ─── Inter-scene game data ──────────────────────────────────────────────────────
+# â”€â”€â”€ Inter-scene game data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ─── Team color palette (8 options) ────────────────────────────────────────────
+const AVAILABLE_COLORS: Array[Color] = [
+	Color(0.20, 0.50, 1.00),   # Azul
+	Color(1.00, 0.20, 0.20),   # Rojo
+	Color(0.24, 0.88, 0.34),   # Verde
+	Color(1.00, 0.88, 0.24),   # Amarillo
+	Color(0.40, 0.80, 1.00),   # Celeste
+	Color(1.00, 0.55, 0.10),   # Naranja
+	Color(0.60, 0.20, 0.90),   # Morado
+	Color(1.00, 0.40, 0.70),   # Rosa
+]
+
 var faction_p1:          int = 0   # FactionData.Faction value
 var faction_p2:          int = 1   # FactionData.Faction value
 var extra_players_enabled: bool = false
@@ -85,6 +225,10 @@ var player_mode_p1:      String = "human"
 var player_mode_p2:      String = "human"
 var player_mode_p3:      String = "human"
 var player_mode_p4:      String = "human"
+var color_p1:            Color  = AVAILABLE_COLORS[0]
+var color_p2:            Color  = AVAILABLE_COLORS[1]
+var color_p3:            Color  = AVAILABLE_COLORS[2]
+var color_p4:            Color  = AVAILABLE_COLORS[3]
 var current_map:         int = 0   # 0=Llanuras  1=Sierras  2=Precordillera
 var map_size:            Vector2i = Vector2i(16, 12)   # cols x rows
 var winner_id:           int = 0   # 0=draw  1=player1  2=player2
@@ -93,8 +237,9 @@ var units_killed_p1:     int = 0   # units eliminated BY player 1 (i.e. P2 units
 var units_killed_p2:     int = 0   # units eliminated BY player 2 (i.e. P1 units killed)
 var towers_captured_p1:  int = 0
 var towers_captured_p2:  int = 0
+var match_stats:         Dictionary = {}
 
-# ─── Generated map data (set by Main before HexGrid ready) ─────────────────────
+# â”€â”€â”€ Generated map data (set by Main before HexGrid ready) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 var map_seed:            int       = 0
 var map_terrain:         Array     = []   # Array[Array[int]] [row][col]
 var map_tower_positions: Array     = []   # Array[Vector2i]
@@ -106,22 +251,24 @@ var map_master_p4:       Vector2i  = Vector2i(10, 12)
 var tutorial_mode_active: bool = false
 var tutorial_chapter_id:  String = ""
 
-# ─── Save path ──────────────────────────────────────────────────────────────────
+# â”€â”€â”€ Save path â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const SAVE_PATH := "user://savegame.dat"
 const DEFAULT_CONTINUE_SCENE_PATH := "res://scenes/Main3D.tscn"
 var completed_runs: Array[Dictionary] = []
 var faction_run_counts: Dictionary = {}
 var unlocked_ids: Array[String] = []
 var equipped_unlock_ids: Array[String] = []
+var equipped_base_card_ids: Array[String] = []
 var completed_tutorial_chapters: Array[String] = []
 var selected_font_id: String = "normal"
+var fullscreen_enabled: bool = false
 var last_completed_run: Dictionary = {}
 var last_new_unlocks: Array[String] = []
 var loaded_match_state: Dictionary = {}
 var loaded_scene_path: String = DEFAULT_CONTINUE_SCENE_PATH
 var has_loaded_match_state: bool = false
 
-# ─── Reset (call before starting a new game) ────────────────────────────────────
+# â”€â”€â”€ Reset (call before starting a new game) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 func reset() -> void:
 	faction_p1          = 0
 	faction_p2          = 1
@@ -143,6 +290,7 @@ func reset() -> void:
 	units_killed_p2     = 0
 	towers_captured_p1  = 0
 	towers_captured_p2  = 0
+	match_stats         = {}
 	map_seed            = 0
 	map_terrain         = []
 	map_tower_positions = []
@@ -156,6 +304,10 @@ func reset() -> void:
 	loaded_match_state  = {}
 	loaded_scene_path   = DEFAULT_CONTINUE_SCENE_PATH
 	has_loaded_match_state = false
+	color_p1            = AVAILABLE_COLORS[0]
+	color_p2            = AVAILABLE_COLORS[1]
+	color_p3            = AVAILABLE_COLORS[2]
+	color_p4            = AVAILABLE_COLORS[3]
 
 func _ready() -> void:
 	load_meta()
@@ -174,6 +326,9 @@ func get_selected_font_id() -> String:
 
 func get_selected_font_label() -> String:
 	return str(FONT_OPTIONS.get(selected_font_id, FONT_OPTIONS["normal"]).get("label", "Normal"))
+
+func is_fullscreen_enabled() -> bool:
+	return fullscreen_enabled
 
 func get_font_label(font_id: String) -> String:
 	return str(FONT_OPTIONS.get(font_id, FONT_OPTIONS["normal"]).get("label", "Normal"))
@@ -216,6 +371,22 @@ func set_selected_font_id(font_id: String) -> void:
 		font_id = "normal"
 	selected_font_id = font_id
 	save_meta()
+
+func set_fullscreen_enabled(enabled: bool) -> void:
+	fullscreen_enabled = enabled
+	save_meta()
+
+func toggle_fullscreen_enabled() -> bool:
+	fullscreen_enabled = not fullscreen_enabled
+	save_meta()
+	return fullscreen_enabled
+
+func apply_window_mode(window: Window) -> void:
+	if window == null:
+		return
+	var target_mode: int = DisplayServer.WINDOW_MODE_FULLSCREEN if fullscreen_enabled else DisplayServer.WINDOW_MODE_WINDOWED
+	DisplayServer.window_set_mode(target_mode)
+	window.mode = Window.MODE_FULLSCREEN if fullscreen_enabled else Window.MODE_WINDOWED
 
 func apply_selected_theme(window: Window) -> void:
 	if window == null:
@@ -276,7 +447,7 @@ func mark_tutorial_chapter_completed(chapter_id: String) -> void:
 func is_tutorial_chapter_completed(chapter_id: String) -> bool:
 	return completed_tutorial_chapters.has(chapter_id)
 
-# ─── Persistence ────────────────────────────────────────────────────────────────
+# â”€â”€â”€ Persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 func save() -> void:
 	var f: FileAccess = FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if f == null:
@@ -300,6 +471,7 @@ func save() -> void:
 		"units_killed_p2":    units_killed_p2,
 		"towers_captured_p1": towers_captured_p1,
 		"towers_captured_p2": towers_captured_p2,
+		"match_stats":        match_stats,
 		"map_seed":           map_seed,
 		"map_size":           map_size,
 		"map_terrain":        map_terrain,
@@ -341,6 +513,7 @@ func load() -> bool:
 	units_killed_p2    = d.get("units_killed_p2",    0)
 	towers_captured_p1 = d.get("towers_captured_p1", 0)
 	towers_captured_p2 = d.get("towers_captured_p2", 0)
+	match_stats        = d.get("match_stats", {})
 	map_seed           = d.get("map_seed", 0)
 	map_size           = d.get("map_size", Vector2i(16, 12))
 	map_terrain        = d.get("map_terrain", [])
@@ -382,6 +555,7 @@ func save_match_in_progress(scene_path: String, match_state: Dictionary) -> void
 		"units_killed_p2":     units_killed_p2,
 		"towers_captured_p1":  towers_captured_p1,
 		"towers_captured_p2":  towers_captured_p2,
+		"match_stats":         match_stats,
 		"map_seed":            map_seed,
 		"map_size":            map_size,
 		"map_terrain":         map_terrain,
@@ -429,8 +603,10 @@ func save_meta() -> void:
 		"faction_run_counts": faction_run_counts,
 		"unlocked_ids": unlocked_ids,
 		"equipped_unlock_ids": equipped_unlock_ids,
+		"equipped_base_card_ids": equipped_base_card_ids,
 		"completed_tutorial_chapters": completed_tutorial_chapters,
 		"selected_font_id": selected_font_id,
+		"fullscreen_enabled": fullscreen_enabled,
 	})
 	f.close()
 
@@ -451,8 +627,13 @@ func load_meta() -> bool:
 	faction_run_counts = d.get("faction_run_counts", {})
 	unlocked_ids = _variant_to_string_array(d.get("unlocked_ids", []))
 	equipped_unlock_ids = _variant_to_string_array(d.get("equipped_unlock_ids", []))
+	if d.has("equipped_base_card_ids"):
+		equipped_base_card_ids = _variant_to_string_array(d.get("equipped_base_card_ids", []))
+	else:
+		equipped_base_card_ids = _get_all_default_faction_card_ids()
 	completed_tutorial_chapters = _variant_to_string_array(d.get("completed_tutorial_chapters", []))
 	selected_font_id = str(d.get("selected_font_id", "normal"))
+	fullscreen_enabled = bool(d.get("fullscreen_enabled", false))
 	_prune_invalid_unlock_ids()
 	_prune_invalid_font_id()
 	return true
@@ -471,6 +652,7 @@ func record_completed_run() -> void:
 		"units_killed_p2": units_killed_p2,
 		"towers_captured_p1": towers_captured_p1,
 		"towers_captured_p2": towers_captured_p2,
+		"match_stats": match_stats.duplicate(true),
 	}
 	last_completed_run = run_summary.duplicate(true)
 	last_new_unlocks.clear()
@@ -502,15 +684,70 @@ func is_unlock_unlocked(unlock_id: String) -> bool:
 func is_unlock_equipped(unlock_id: String) -> bool:
 	return equipped_unlock_ids.has(unlock_id)
 
+func is_base_card_equipped(card_id: String) -> bool:
+	return equipped_base_card_ids.has(card_id)
+
+func get_max_equipped_extra_faction_cards() -> int:
+	return MAX_EQUIPPED_EXTRA_FACTION_CARDS
+
+func get_max_equipped_faction_cards_for_faction(faction_id: int) -> int:
+	return get_default_faction_cards(faction_id).size() + MAX_EQUIPPED_EXTRA_FACTION_CARDS
+
+func get_equipped_bonus_card_count_for_faction(faction_id: int) -> int:
+	var total: int = 0
+	for unlock_id: String in equipped_unlock_ids:
+		var unlock_def: Dictionary = get_unlock_def(unlock_id)
+		if unlock_def.is_empty():
+			continue
+		if int(unlock_def.get("faction", -1)) != faction_id:
+			continue
+		total += (unlock_def.get("reward_cards", []) as Array).size()
+	return total
+
+func get_equipped_base_card_count_for_faction(faction_id: int) -> int:
+	var total: int = 0
+	for card_data: Dictionary in get_default_faction_cards(faction_id):
+		if is_base_card_equipped(str(card_data.get("source_card_id", ""))):
+			total += 1
+	return total
+
+func get_equipped_faction_card_count_for_faction(faction_id: int) -> int:
+	return get_equipped_base_card_count_for_faction(faction_id) + get_equipped_bonus_card_count_for_faction(faction_id)
+
+func can_equip_unlock(unlock_id: String) -> bool:
+	if not is_unlock_unlocked(unlock_id):
+		return false
+	if equipped_unlock_ids.has(unlock_id):
+		return true
+	var unlock_def: Dictionary = get_unlock_def(unlock_id)
+	if unlock_def.is_empty():
+		return false
+	var faction_id: int = int(unlock_def.get("faction", -1))
+	var reward_count: int = (unlock_def.get("reward_cards", []) as Array).size()
+	return get_equipped_bonus_card_count_for_faction(faction_id) + reward_count <= MAX_EQUIPPED_EXTRA_FACTION_CARDS
+
 func toggle_unlock_equipped(unlock_id: String) -> bool:
 	if not is_unlock_unlocked(unlock_id):
 		return false
 	if equipped_unlock_ids.has(unlock_id):
 		equipped_unlock_ids.erase(unlock_id)
 	else:
+		if not can_equip_unlock(unlock_id):
+			return false
 		equipped_unlock_ids.append(unlock_id)
 	save_meta()
 	return equipped_unlock_ids.has(unlock_id)
+
+func toggle_base_card_equipped(card_id: String) -> bool:
+	if card_id == "":
+		return false
+	if equipped_base_card_ids.has(card_id):
+		equipped_base_card_ids.erase(card_id)
+	else:
+		equipped_base_card_ids.append(card_id)
+		equipped_base_card_ids.sort()
+	save_meta()
+	return equipped_base_card_ids.has(card_id)
 
 func get_unlock_progress(unlock_id: String) -> Dictionary:
 	var unlock_def: Dictionary = get_unlock_def(unlock_id)
@@ -528,6 +765,14 @@ func get_unlock_progress(unlock_id: String) -> Dictionary:
 func get_equipped_bonus_cards_for_player(player_id: int) -> Array[Dictionary]:
 	var cards: Array[Dictionary] = []
 	var player_faction: int = get_faction_for_player(player_id)
+	for default_card: Dictionary in get_default_faction_cards(player_faction):
+		if not is_base_card_equipped(str(default_card.get("source_card_id", ""))):
+			continue
+		var card: Dictionary = default_card.duplicate(true)
+		card.erase("source_card_id")
+		card["allowed_player_ids"] = [player_id]
+		card["faction"] = player_faction
+		cards.append(card)
 	for unlock_id: String in equipped_unlock_ids:
 		var unlock_def: Dictionary = get_unlock_def(unlock_id)
 		if unlock_def.is_empty():
@@ -539,8 +784,21 @@ func get_equipped_bonus_cards_for_player(player_id: int) -> Array[Dictionary]:
 				var card: Dictionary = (card_value as Dictionary).duplicate(true)
 				card["source_unlock_id"] = unlock_id
 				card["allowed_player_ids"] = [player_id]
+				card["faction"] = player_faction
 				cards.append(card)
 	return cards
+
+func get_default_faction_cards(faction: int) -> Array[Dictionary]:
+	var cards: Array = FactionData.get_faction_cards(faction)
+	var result: Array[Dictionary] = []
+	for i: int in range(cards.size()):
+		var value: Variant = cards[i]
+		if not (value is Dictionary):
+			continue
+		var card: Dictionary = (value as Dictionary).duplicate(true)
+		card["source_card_id"] = _make_base_card_id(faction, i)
+		result.append(card)
+	return result
 
 func consume_new_unlocks() -> Array[String]:
 	var unlocks: Array[String] = last_new_unlocks.duplicate()
@@ -559,8 +817,11 @@ func _ensure_meta_defaults() -> void:
 		unlocked_ids = []
 	if equipped_unlock_ids == null:
 		equipped_unlock_ids = []
+	if equipped_base_card_ids == null:
+		equipped_base_card_ids = _get_all_default_faction_card_ids()
 	if selected_font_id == "":
 		selected_font_id = "normal"
+	fullscreen_enabled = bool(fullscreen_enabled)
 	if last_completed_run == null:
 		last_completed_run = {}
 	if last_new_unlocks == null:
@@ -595,14 +856,40 @@ func _prune_invalid_unlock_ids() -> void:
 	unlocked_ids = valid_unlocked
 
 	var valid_equipped: Array[String] = []
+	var faction_card_counts: Dictionary = {}
 	for unlock_id: String in equipped_unlock_ids:
-		if UNLOCK_DEFS.has(unlock_id) and unlocked_ids.has(unlock_id):
-			valid_equipped.append(unlock_id)
+		if not UNLOCK_DEFS.has(unlock_id) or not unlocked_ids.has(unlock_id):
+			continue
+		var unlock_def: Dictionary = get_unlock_def(unlock_id)
+		var faction_id: int = int(unlock_def.get("faction", -1))
+		var reward_count: int = (unlock_def.get("reward_cards", []) as Array).size()
+		var current_count: int = int(faction_card_counts.get(faction_id, 0))
+		if current_count + reward_count > MAX_EQUIPPED_EXTRA_FACTION_CARDS:
+			continue
+		faction_card_counts[faction_id] = current_count + reward_count
+		valid_equipped.append(unlock_id)
 	equipped_unlock_ids = valid_equipped
+
+	var valid_base_ids: Array[String] = _get_all_default_faction_card_ids()
+	var filtered_base_ids: Array[String] = []
+	for card_id: String in equipped_base_card_ids:
+		if valid_base_ids.has(card_id):
+			filtered_base_ids.append(card_id)
+	equipped_base_card_ids = filtered_base_ids
 
 func _prune_invalid_font_id() -> void:
 	if not FONT_OPTIONS.has(selected_font_id):
 		selected_font_id = "normal"
+
+func _make_base_card_id(faction: int, index: int) -> String:
+	return "base_%d_%d" % [faction, index]
+
+func _get_all_default_faction_card_ids() -> Array[String]:
+	var result: Array[String] = []
+	for faction_id: int in FactionData.get_all_faction_ids():
+		for card_data: Dictionary in get_default_faction_cards(faction_id):
+			result.append(str(card_data.get("source_card_id", "")))
+	return result
 
 func _read_save_data() -> Dictionary:
 	if not FileAccess.file_exists(SAVE_PATH):
@@ -644,16 +931,18 @@ func is_player_enabled(player_id: int) -> bool:
 
 func get_player_color(player_id: int) -> Color:
 	match player_id:
-		1:
-			return Color(0.20, 0.50, 1.00, 1.00)
-		2:
-			return Color(1.00, 0.20, 0.20, 1.00)
-		3:
-			return Color(0.24, 0.88, 0.34, 1.00)
-		4:
-			return Color(1.00, 0.88, 0.24, 1.00)
-		_:
-			return Color(0.75, 0.75, 0.75, 1.00)
+		1: return color_p1
+		2: return color_p2
+		3: return color_p3
+		4: return color_p4
+		_: return Color(0.75, 0.75, 0.75, 1.00)
+
+func set_player_color(player_id: int, color: Color) -> void:
+	match player_id:
+		1: color_p1 = color
+		2: color_p2 = color
+		3: color_p3 = color
+		4: color_p4 = color
 
 func get_faction_for_player(player_id: int) -> int:
 	match player_id:
@@ -693,4 +982,3 @@ func get_master_cell_for_player(player_id: int) -> Vector2i:
 			return map_master_p4
 		_:
 			return Vector2i(-1, -1)
-

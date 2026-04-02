@@ -32,10 +32,16 @@ var _map_max: Vector3 = Vector3(40.0, 0.0, 30.0)
 var _combat_locked:    bool    = false
 var _pre_combat_transform: Transform3D = Transform3D.IDENTITY
 var _pre_combat_zoom:      float        = 16.0
+var _showcase_locked: bool = false
+var _manual_cinematic_lock: bool = false
+var _pre_showcase_transform: Transform3D = Transform3D.IDENTITY
+var _pre_showcase_zoom: float = 16.0
+var _pre_showcase_fov: float = 75.0
 
 var _combat_light: SpotLight3D = null
 var _active_tween: Tween = null
 var _combat_dof_tween: Tween = null
+var _shake_tween: Tween = null
 var _camera_attributes: CameraAttributesPractical = null
 var _pre_combat_dof_amount: float = 0.0
 var _pre_combat_near_enabled: bool = false
@@ -95,7 +101,7 @@ func _compute_look_at_rotation(from: Vector3, to: Vector3) -> Vector3:
 ## Smoothly pans to world_pos preserving current height and rotation.
 ## Skips silently if a combat sequence is still active.
 func focus_on(world_pos: Vector3, zoom_height: float = -1.0) -> void:
-	if _combat_locked:
+	if _combat_locked or _showcase_locked:
 		return
 	if _active_tween != null and _active_tween.is_valid():
 		_active_tween.kill()
@@ -150,12 +156,93 @@ func exit_combat_mode() -> Tween:
 	)
 	return _active_tween
 
+func enter_showcase_mode(world_pos: Vector3, zoom_height: float = 1.72, focus_height: float = 0.78, showcase_fov: float = 58.0) -> Tween:
+	if _combat_locked:
+		var blocked_tween := create_tween()
+		blocked_tween.tween_interval(0.0)
+		return blocked_tween
+	if _showcase_locked:
+		exit_showcase_mode(true)
+	_pre_showcase_transform = global_transform
+	_pre_showcase_zoom = _target_zoom
+	_pre_showcase_fov = fov
+	_showcase_locked = true
+	if _active_tween != null and _active_tween.is_valid():
+		_active_tween.kill()
+	var focus_target: Vector3 = world_pos + Vector3(0.0, focus_height, 0.0)
+	var combat_like_offset: Vector3 = Vector3(0.0, zoom_height, 1.82)
+	var desired_position: Vector3 = focus_target + combat_like_offset
+	var target_pos: Vector3 = Vector3(
+		clampf(desired_position.x, _map_min.x, _map_max.x),
+		zoom_height,
+		clampf(desired_position.z, _map_min.z, _map_max.z)
+	)
+	var target_basis: Basis = Basis.looking_at(focus_target - target_pos, Vector3.UP)
+	var target_transform := Transform3D(target_basis, target_pos)
+	_target_pos = Vector3(target_pos.x, 0.0, target_pos.z)
+	_target_zoom = zoom_height
+	_ensure_combat_light()
+	if _combat_light != null:
+		_combat_light.position = Vector3(0.0, 0.34, 0.12)
+		_combat_light.rotation = Vector3.ZERO
+		_combat_light.light_color = Color(1.0, 0.90, 0.78, 1.0)
+		_combat_light.light_energy = 3.9
+		_combat_light.spot_angle = 54.0
+		_combat_light.spot_range = 9.0
+		_combat_light.visible = true
+	_enable_combat_dof(target_pos.distance_to(focus_target))
+	_active_tween = create_tween()
+	_active_tween.set_parallel(true)
+	_active_tween.tween_property(self, "global_transform", target_transform, 0.55) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_active_tween.tween_property(self, "fov", showcase_fov, 0.55) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	return _active_tween
+
+func exit_showcase_mode(immediate: bool = false) -> Tween:
+	if not _showcase_locked:
+		var idle_tween := create_tween()
+		idle_tween.tween_interval(0.0)
+		return idle_tween
+	if _active_tween != null and _active_tween.is_valid():
+		_active_tween.kill()
+	_disable_combat_dof(immediate)
+	if immediate:
+		global_transform = _pre_showcase_transform
+		_target_pos = Vector3(_pre_showcase_transform.origin.x, 0.0, _pre_showcase_transform.origin.z)
+		_target_zoom = _pre_showcase_zoom
+		fov = _pre_showcase_fov
+		if _combat_light != null and is_instance_valid(_combat_light):
+			_combat_light.queue_free()
+			_combat_light = null
+		_showcase_locked = false
+		var done_tween := create_tween()
+		done_tween.tween_interval(0.0)
+		return done_tween
+	_target_pos = Vector3(_pre_showcase_transform.origin.x, 0.0, _pre_showcase_transform.origin.z)
+	_target_zoom = _pre_showcase_zoom
+	_active_tween = create_tween()
+	_active_tween.set_parallel(true)
+	_active_tween.tween_property(self, "global_transform", _pre_showcase_transform, 0.42) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_active_tween.tween_property(self, "fov", _pre_showcase_fov, 0.42) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_active_tween.chain().tween_callback(func() -> void:
+		if _combat_light != null and is_instance_valid(_combat_light):
+			_combat_light.queue_free()
+			_combat_light = null
+		_showcase_locked = false
+	)
+	return _active_tween
+
 func force_reset_combat_state(restore_transform: bool = true) -> void:
 	var was_locked: bool = _combat_locked
 	if _active_tween != null and _active_tween.is_valid():
 		_active_tween.kill()
 	if _combat_dof_tween != null and _combat_dof_tween.is_valid():
 		_combat_dof_tween.kill()
+	if _shake_tween != null and _shake_tween.is_valid():
+		_shake_tween.kill()
 	if restore_transform and was_locked:
 		global_transform = _pre_combat_transform
 		_target_pos = Vector3(_pre_combat_transform.origin.x, 0.0, _pre_combat_transform.origin.z)
@@ -167,6 +254,48 @@ func force_reset_combat_state(restore_transform: bool = true) -> void:
 	_combat_light = null
 	_drag_active = false
 	_combat_locked = false
+	_showcase_locked = false
+	_manual_cinematic_lock = false
+	h_offset = 0.0
+	v_offset = 0.0
+
+func set_manual_cinematic_lock(active: bool) -> void:
+	if active and _active_tween != null and _active_tween.is_valid():
+		_active_tween.kill()
+	_drag_active = false
+	_manual_cinematic_lock = active
+
+func shake_combat(strength: float = 0.18, duration: float = 0.24) -> void:
+	if _shake_tween != null and _shake_tween.is_valid():
+		_shake_tween.kill()
+	h_offset = 0.0
+	v_offset = 0.0
+	var half_duration: float = maxf(duration * 0.5, 0.05)
+	_shake_tween = create_tween()
+	_shake_tween.set_parallel(true)
+	_shake_tween.tween_method(
+		func(weight: float) -> void:
+			var amp: float = strength * (1.0 - weight * 0.35)
+			h_offset = randf_range(-amp, amp)
+			v_offset = randf_range(-amp * 0.55, amp * 0.55),
+		0.0,
+		1.0,
+		half_duration
+	)
+	_shake_tween.chain()
+	_shake_tween.tween_method(
+		func(weight: float) -> void:
+			var amp: float = strength * (1.0 - weight)
+			h_offset = randf_range(-amp, amp)
+			v_offset = randf_range(-amp * 0.55, amp * 0.55),
+		0.0,
+		1.0,
+		half_duration
+	)
+	_shake_tween.finished.connect(func() -> void:
+		h_offset = 0.0
+		v_offset = 0.0
+	)
 
 # ─── Godot callbacks ─────────────────────────────────────────────────────────────
 func _ready() -> void:
@@ -198,7 +327,7 @@ func _ensure_combat_light() -> void:
 	add_child(_combat_light)
 
 func _process(delta: float) -> void:
-	if _combat_locked:
+	if _combat_locked or _showcase_locked or _manual_cinematic_lock:
 		return   # Tween controls the camera; skip lerp to avoid fighting it
 	_handle_keyboard(delta)
 	var t: float = minf(LERP_SPEED * delta, 1.0)
@@ -207,7 +336,7 @@ func _process(delta: float) -> void:
 	position.y = lerpf(position.y, _target_zoom,  t)
 
 func _unhandled_input(event: InputEvent) -> void:
-	if _combat_locked:
+	if _combat_locked or _showcase_locked or _manual_cinematic_lock:
 		return   # Block all camera input during cinematic
 	if event is InputEventMouseButton:
 		var mbe: InputEventMouseButton = event as InputEventMouseButton

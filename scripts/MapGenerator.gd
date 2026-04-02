@@ -58,6 +58,7 @@ func generate(p_seed: int, map_type: String, map_size: Vector2i = Vector2i(24, 1
 	_place_towers()
 	_place_masters()
 	_ensure_home_towers()
+	_ensure_tower_connectivity()
 	_assign_tower_incomes()
 
 func get_terrain() -> Array:
@@ -850,7 +851,7 @@ func _place_towers_precordillera() -> void:
 
 	_tower_positions.clear()
 
-	var target_mountain_towers: int = mini(target_generated_towers, int(round(float(target_generated_towers) * 0.70)))
+	var target_mountain_towers: int = mini(target_generated_towers, int(round(float(target_generated_towers) * 0.25)))
 	_shuffle(mountain_pool, rng)
 	_greedy_place(mountain_pool, target_mountain_towers, min_dist_sq)
 
@@ -966,6 +967,165 @@ func _find_adjacent_tower_cell(master_cell: Vector2i) -> Vector2i:
 		if _is_valid_home_tower_cell(neighbor):
 			return neighbor
 	return _find_walkable_near(master_cell.x, master_cell.y)
+
+func _ensure_tower_connectivity() -> void:
+	if _tower_positions.size() <= 1:
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = _seed ^ 0x7A0E221
+	var source_cells: Array[Vector2i] = _get_tower_connectivity_sources()
+	if source_cells.is_empty():
+		source_cells.append(_tower_positions[0] as Vector2i)
+	var guard: int = _tower_positions.size() * 8
+	while guard > 0:
+		guard -= 1
+		var reachable: Dictionary = _flood_passable_cells(source_cells)
+		var disconnected_tower: Vector2i = Vector2i(-1, -1)
+		for tower_value: Variant in _tower_positions:
+			var tower_cell: Vector2i = tower_value as Vector2i
+			if not reachable.has(tower_cell):
+				disconnected_tower = tower_cell
+				break
+		if disconnected_tower == Vector2i(-1, -1):
+			return
+		var replacement: Vector2i = _find_reachable_tower_relocation(disconnected_tower, reachable)
+		if replacement != Vector2i(-1, -1):
+			var replace_index: int = _tower_positions.find(disconnected_tower)
+			if replace_index != -1:
+				_tower_positions[replace_index] = replacement
+			continue
+		var path: Array[Vector2i] = _find_path_to_connected_component(disconnected_tower, reachable)
+		if path.is_empty():
+			break
+		for cell: Vector2i in path:
+			if not _is_passable_tower_terrain(cell):
+				_carve_1x1_step(cell, rng)
+
+func _get_tower_connectivity_sources() -> Array[Vector2i]:
+	var sources: Array[Vector2i] = []
+	for master_cell: Vector2i in [_master_p1, _master_p2, _master_p3, _master_p4]:
+		if master_cell == Vector2i(-1, -1):
+			continue
+		if not _is_passable_tower_terrain(master_cell):
+			continue
+		if not sources.has(master_cell):
+			sources.append(master_cell)
+		for neighbor: Vector2i in _get_hex_neighbors(master_cell):
+			if _is_passable_tower_terrain(neighbor) and not sources.has(neighbor):
+				sources.append(neighbor)
+	return sources
+
+func _flood_passable_cells(starts: Array) -> Dictionary:
+	var visited: Dictionary = {}
+	var frontier: Array[Vector2i] = []
+	for start_value: Variant in starts:
+		var start: Vector2i = start_value as Vector2i
+		if start == Vector2i(-1, -1) or not _is_passable_tower_terrain(start) or visited.has(start):
+			continue
+		visited[start] = true
+		frontier.append(start)
+	if frontier.is_empty():
+		return visited
+	var index: int = 0
+	while index < frontier.size():
+		var current: Vector2i = frontier[index]
+		index += 1
+		for neighbor: Vector2i in _get_hex_neighbors(current):
+			if visited.has(neighbor) or not _is_passable_tower_terrain(neighbor):
+				continue
+			visited[neighbor] = true
+			frontier.append(neighbor)
+	return visited
+
+func _find_path_to_connected_component(start: Vector2i, connected_component: Dictionary) -> Array[Vector2i]:
+	var dist: Dictionary = {}
+	var prev: Dictionary = {}
+	var visited: Dictionary = {}
+	for r: int in range(ROWS):
+		for c: int in range(COLS):
+			var cell := Vector2i(c, r)
+			dist[cell] = 1 << 30
+	dist[start] = 0
+
+	while true:
+		var current: Vector2i = _pick_lowest_distance_cell(dist, visited)
+		if current == Vector2i(-1, -1):
+			break
+		if connected_component.has(current):
+			return _reconstruct_cell_path(start, current, prev)
+		visited[current] = true
+		for neighbor: Vector2i in _get_hex_neighbors(current):
+			if visited.has(neighbor):
+				continue
+			var step_cost: int = 0 if _is_passable_tower_terrain(neighbor) or connected_component.has(neighbor) else 1
+			var new_cost: int = int(dist.get(current, 1 << 30)) + step_cost
+			if new_cost < int(dist.get(neighbor, 1 << 30)):
+				dist[neighbor] = new_cost
+				prev[neighbor] = current
+	return []
+
+func _pick_lowest_distance_cell(dist: Dictionary, visited: Dictionary) -> Vector2i:
+	var best_cell: Vector2i = Vector2i(-1, -1)
+	var best_cost: int = 1 << 30
+	for cell_value: Variant in dist.keys():
+		var cell: Vector2i = cell_value as Vector2i
+		if visited.has(cell):
+			continue
+		var cost: int = int(dist.get(cell, 1 << 30))
+		if cost < best_cost:
+			best_cost = cost
+			best_cell = cell
+	return best_cell
+
+func _reconstruct_cell_path(start: Vector2i, goal: Vector2i, prev: Dictionary) -> Array[Vector2i]:
+	var path: Array[Vector2i] = []
+	var current: Vector2i = goal
+	while current != start:
+		path.push_front(current)
+		if not prev.has(current):
+			return []
+		current = prev[current] as Vector2i
+	return path
+
+func _find_reachable_tower_relocation(original_cell: Vector2i, reachable: Dictionary) -> Vector2i:
+	var best_cell: Vector2i = Vector2i(-1, -1)
+	var best_score: int = 1 << 30
+	for cell_value: Variant in reachable.keys():
+		var cell: Vector2i = cell_value as Vector2i
+		if cell == original_cell or _tower_positions.has(cell):
+			continue
+		if not _is_valid_relocated_tower_cell(cell):
+			continue
+		var terrain_penalty: int = 0 if _is_preferred_tower_terrain(cell) else 8
+		var score: int = _hex_distance_cells(original_cell, cell) * 10 + terrain_penalty
+		if score < best_score:
+			best_score = score
+			best_cell = cell
+	return best_cell
+
+func _is_valid_relocated_tower_cell(cell: Vector2i) -> bool:
+	if cell == _master_p1 or cell == _master_p2 or cell == _master_p3 or cell == _master_p4:
+		return false
+	return _is_passable_tower_terrain(cell)
+
+func _is_preferred_tower_terrain(cell: Vector2i) -> bool:
+	var terrain_type: int = _terrain[cell.y][cell.x]
+	return terrain_type == GRASS or terrain_type == FOREST or terrain_type == DESERT
+
+func _hex_distance_cells(a: Vector2i, b: Vector2i) -> int:
+	var aq: int = a.x
+	var ar: int = a.y - (a.x - (a.x % 2)) / 2
+	var as_: int = -aq - ar
+	var bq: int = b.x
+	var br: int = b.y - (b.x - (b.x % 2)) / 2
+	var bs: int = -bq - br
+	return (absi(aq - bq) + absi(ar - br) + absi(as_ - bs)) / 2
+
+func _is_passable_tower_terrain(cell: Vector2i) -> bool:
+	if cell.x < 0 or cell.x >= COLS or cell.y < 0 or cell.y >= ROWS:
+		return false
+	var terrain_type: int = _terrain[cell.y][cell.x]
+	return terrain_type != WATER and terrain_type != CORDILLERA
 
 func _get_hex_neighbors(cell: Vector2i) -> Array[Vector2i]:
 	var offsets: Array = NEIGHBORS_ODD if cell.x % 2 == 1 else NEIGHBORS_EVEN

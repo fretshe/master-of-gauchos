@@ -13,7 +13,8 @@ const LEVEL_MULTIPLIERS := {
 	Unit.Level.BRONZE: 1.00,
 	Unit.Level.SILVER: 1.35,
 	Unit.Level.GOLD: 1.75,
-	Unit.Level.DIAMOND: 2.20,
+	Unit.Level.PLATINUM: 2.20,
+	Unit.Level.DIAMOND: 2.70,
 }
 
 const TOWER_CONTROL_WEIGHT := 120

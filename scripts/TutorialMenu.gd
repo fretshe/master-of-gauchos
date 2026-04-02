@@ -21,7 +21,7 @@ const CHAPTERS := [
 		"id": "chapter_1",
 		"title": "Capitulo 1",
 		"subtitle": "Primeros pasos",
-		"body": "Aprende a leer el tablero, capturar torres, invocar una unidad y lanzar tu primer ataque.",
+		"body": "Aprende a leer el tablero, capturar torres, interpretar dados, seguir la interfaz de combate y entender cómo crece una unidad.",
 		"status": "Disponible",
 		"button": "Jugar",
 		"enabled": true,
@@ -31,7 +31,7 @@ const CHAPTERS := [
 		"id": "chapter_2",
 		"title": "Capitulo 2",
 		"subtitle": "Invocación y counters",
-		"body": "Profundiza en esencia, ventajas entre clases y decisiones de refuerzo para cada frente.",
+		"body": "Profundiza en esencia, ventaja entre clases, terreno y decisiones de refuerzo para ganar mejores duelos.",
 		"status": "Disponible",
 		"button": "Jugar",
 		"enabled": true,
@@ -41,7 +41,7 @@ const CHAPTERS := [
 		"id": "chapter_3",
 		"title": "Capitulo 3",
 		"subtitle": "Cartas y presion tactica",
-		"body": "Combina cartas, posicionamiento y control del mapa para cerrar una partida con criterio.",
+		"body": "Combina cartas, posicionamiento y control del mapa para cerrar una partida con criterio, ganar XP y abrir Bendiciones.",
 		"status": "Disponible",
 		"button": "Jugar",
 		"enabled": true,
@@ -78,7 +78,7 @@ func _build_ui() -> void:
 	add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "Tres capitulos para aprender las mecanicas con calma."
+	subtitle.text = "Tres capitulos guiados para aprender sistemas, combate, cartas y progresion."
 	subtitle.position = Vector2(0.0, 78.0)
 	subtitle.size = Vector2(1280.0, 24.0)
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -93,7 +93,7 @@ func _build_ui() -> void:
 	add_child(panel)
 
 	var intro := Label.new()
-	intro.text = "Este espacio concentra los mapas tutoriales hechos a mano. Ya puedes recorrer los tres capitulos base para aprender tablero, counters y cartas."
+	intro.text = "Este espacio concentra mapas tutoriales hechos a mano y totalmente controlados. Recorrelos para aprender tablero, dados, panel de combate, counters, cartas, XP y Bendiciones sin dejar cabos sueltos."
 	intro.position = Vector2(28.0, 22.0)
 	intro.size = Vector2(1044.0, 44.0)
 	intro.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

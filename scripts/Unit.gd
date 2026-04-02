@@ -2,184 +2,229 @@ extends Node2D
 
 class_name Unit
 
-# ─── Enums ──────────────────────────────────────────────────────────────────────
 enum UnitType  { WARRIOR, ARCHER, LANCER, RIDER }
-enum Level     { BRONZE = 1, SILVER = 2, GOLD = 3, DIAMOND = 4 }
-enum DiceColor { RED, YELLOW, GREEN, BLUE }
+enum Level     { BRONZE = 1, SILVER = 2, GOLD = 3, PLATINUM = 4, DIAMOND = 5 }
+enum DiceColor { BRONZE, SILVER, GOLD, PLATINUM, DIAMOND }
 const MASTER_UNIT_TYPE: int = -1
 
-# ─── Type names ─────────────────────────────────────────────────────────────────
 const TYPE_NAMES := {
-	MASTER_UNIT_TYPE:   "Master",
+	MASTER_UNIT_TYPE: "Master",
 	UnitType.WARRIOR: "Warrior",
-	UnitType.ARCHER:  "Archer",
-	UnitType.LANCER:  "Lancer",
-	UnitType.RIDER:   "Rider",
+	UnitType.ARCHER: "Archer",
+	UnitType.LANCER: "Lancer",
+	UnitType.RIDER: "Rider",
 }
 
-# ─── Counter wheel: WARRIOR → LANCER → RIDER → ARCHER → WARRIOR ─────────────────
 const COUNTER_CHART: Array = [
 	[UnitType.WARRIOR, UnitType.LANCER],
-	[UnitType.LANCER,  UnitType.RIDER],
-	[UnitType.RIDER,   UnitType.ARCHER],
-	[UnitType.ARCHER,  UnitType.WARRIOR],
+	[UnitType.LANCER, UnitType.RIDER],
+	[UnitType.RIDER, UnitType.ARCHER],
+	[UnitType.ARCHER, UnitType.WARRIOR],
 ]
 
-# ─── Dice faces per color ────────────────────────────────────────────────────────
 const DICE := {
-	DiceColor.RED:    [0, 0, 1, 1, 2, 3],
-	DiceColor.YELLOW: [0, 0, 1, 2, 3, 3],
-	DiceColor.GREEN:  [0, 0, 2, 3, 3, 4],
-	DiceColor.BLUE:   [1, 2, 3, 4, 4, 5],
+	DiceColor.BRONZE: [0, 0, 1, 1, 2, 2, 3, 3],
+	DiceColor.SILVER: [0, 1, 1, 2, 2, 3, 3, 3],
+	DiceColor.GOLD: [1, 1, 2, 2, 3, 3, 4, 4],
+	DiceColor.PLATINUM: [1, 2, 2, 3, 3, 4, 4, 5],
+	DiceColor.DIAMOND: [2, 2, 3, 4, 4, 5, 6, 7],
 }
 
-# ─── Dice per unit type indexed by level-1 (0=BRONZE, 1=SILVER, 2=GOLD) ─────────
-# null means no die at that level
 const UNIT_MELEE_DICE := {
-	UnitType.WARRIOR: [DiceColor.YELLOW, DiceColor.GREEN,  DiceColor.BLUE],
-	UnitType.ARCHER:  [DiceColor.RED,    DiceColor.YELLOW, DiceColor.YELLOW],
-	UnitType.LANCER:  [DiceColor.RED,    DiceColor.YELLOW, DiceColor.GREEN],
-	UnitType.RIDER:   [DiceColor.YELLOW, DiceColor.GREEN,  DiceColor.BLUE],
+	UnitType.WARRIOR: [DiceColor.SILVER, DiceColor.GOLD, DiceColor.GOLD, DiceColor.PLATINUM, DiceColor.DIAMOND],
+	UnitType.ARCHER: [DiceColor.BRONZE, DiceColor.SILVER, DiceColor.GOLD, DiceColor.GOLD, DiceColor.PLATINUM],
+	UnitType.LANCER: [DiceColor.BRONZE, DiceColor.SILVER, DiceColor.GOLD, DiceColor.GOLD, DiceColor.PLATINUM],
+	UnitType.RIDER: [DiceColor.SILVER, DiceColor.GOLD, DiceColor.GOLD, DiceColor.PLATINUM, DiceColor.DIAMOND],
 }
 
 const UNIT_RANGED_DICE := {
-	UnitType.WARRIOR: [null,             null,             DiceColor.RED],
-	UnitType.ARCHER:  [DiceColor.YELLOW, DiceColor.GREEN,  DiceColor.BLUE],
-	UnitType.LANCER:  [DiceColor.RED,    DiceColor.RED,    DiceColor.YELLOW],
-	UnitType.RIDER:   [null,             DiceColor.RED,    DiceColor.YELLOW],
+	UnitType.WARRIOR: [null, null, null, null, null],
+	UnitType.ARCHER: [DiceColor.SILVER, DiceColor.GOLD, DiceColor.GOLD, DiceColor.PLATINUM, DiceColor.DIAMOND],
+	UnitType.LANCER: [DiceColor.SILVER, DiceColor.SILVER, DiceColor.GOLD, DiceColor.PLATINUM, DiceColor.DIAMOND],
+	UnitType.RIDER: [null, null, null, null, null],
 }
 
-# ─── Base stats per type ─────────────────────────────────────────────────────────
 const BASE_HP := {
 	UnitType.WARRIOR: 6,
-	UnitType.ARCHER:  4,
-	UnitType.LANCER:  5,
-	UnitType.RIDER:   5,
+	UnitType.ARCHER: 4,
+	UnitType.LANCER: 5,
+	UnitType.RIDER: 5,
 }
 
 const BASE_MOVE := {
 	UnitType.WARRIOR: 3,
-	UnitType.ARCHER:  3,
-	UnitType.LANCER:  3,
-	UnitType.RIDER:   5,
+	UnitType.ARCHER: 3,
+	UnitType.LANCER: 3,
+	UnitType.RIDER: 4,
 }
 
 const BASE_ATTACKS_PER_COMBAT := {
 	MASTER_UNIT_TYPE: 2,
 	UnitType.WARRIOR: 3,
-	UnitType.ARCHER:  2,
-	UnitType.LANCER:  4,
-	UnitType.RIDER:   2,
+	UnitType.ARCHER: 2,
+	UnitType.LANCER: 3,
+	UnitType.RIDER: 2,
+}
+
+const BASE_RANGED_ATTACKS_PER_COMBAT := {
+	UnitType.ARCHER: 2,
+	UnitType.LANCER: 1,
 }
 
 const TERRAIN_ATTACK_MODIFIERS := {
-	0: 0,   # GRASS
-	1: -1,  # WATER
-	2: 2,   # MOUNTAIN
-	3: 1,   # FOREST
-	4: 0,   # DESERT
-	5: 0,   # VOLCANO
-	6: 0,   # CORDILLERA
+	0: 0,
+	1: -1,
+	2: 2,
+	3: 1,
+	4: 0,
+	5: 0,
+	6: 0,
 }
 
 const DAMAGE_SCALE_PER_HIT := {
-	UnitType.WARRIOR: [0.50, 0.50, 0.44],
-	UnitType.ARCHER:  [0.58, 0.52, 0.42],
-	UnitType.LANCER:  [0.44, 0.40, 0.38],
-	UnitType.RIDER:   [0.54, 0.48, 0.42],
+	UnitType.WARRIOR: [0.38, 0.37, 0.39, 0.40, 0.42],
+	UnitType.ARCHER: [0.40, 0.39, 0.38, 0.39, 0.40],
+	UnitType.LANCER: [0.34, 0.35, 0.36, 0.37, 0.38],
+	UnitType.RIDER: [0.40, 0.41, 0.42, 0.43, 0.45],
+}
+const EXP_REQUIRED_BY_LEVEL := {
+	UnitType.WARRIOR: [16, 26, 38, 52],
+	UnitType.ARCHER: [14, 22, 32, 44],
+	UnitType.LANCER: [17, 27, 39, 54],
+	UnitType.RIDER: [15, 24, 35, 48],
 }
 
-# ─── Properties ─────────────────────────────────────────────────────────────────
-var unit_name:    String = ""
-var unit_type:    int    = UnitType.WARRIOR
-var owner_id:     int    = 1
-var level:        int    = Level.BRONZE
-var experience:   int    = 0
+var unit_name: String = ""
+var unit_type: int = UnitType.WARRIOR
+var owner_id: int = 1
+var level: int = Level.BRONZE
+var experience: int = 0
 
-var hp:           int    = 0
-var max_hp:       int    = 0
-var move_range:   int    = 0
-var attack_range: int    = 1
+var hp: int = 0
+var max_hp: int = 0
+var move_range: int = 0
+var attack_range: int = 1
 var current_hex_cell: Vector2i = Vector2i(-1, -1)
 
-# Turn state
-var moved:       bool = false
+var moved: bool = false
 var has_attacked: bool = false
+var move_bonus: int = 0
+var extra_attacks: int = 0
+var attack_debuff: int = 0
+var defense_buff: int = 0
+var untargetable: bool = false
 
-# ─── Visual animation state ──────────────────────────────────────────────────────
-var visual_pos:         Vector2 = Vector2.ZERO
-var visual_scale:       float   = 1.0
-var visual_alpha:       float   = 1.0
-var visual_flash:       float   = 0.0
-var visual_flash_color: Color   = Color(0.95, 0.80, 0.20)
+var active_bonuses: Array[String] = []
+var bonus_tough_skin: bool = false
+var bonus_veteran: bool = false
+var bonus_immune: bool = false
+var bonus_resistant: bool = false
+var bonus_swiftness: bool = false
+var bonus_raider: bool = false
+var bonus_fury: bool = false
+var bonus_battle_veteran: bool = false
+var bonus_cleaver: bool = false
+var bonus_executioner: bool = false
+var bonus_precision: bool = false
+var bonus_long_range: bool = false
+var bonus_volley: bool = false
+var bonus_marksman: bool = false
+var bonus_javelin_expert: bool = false
+var bonus_charge: bool = false
+var bonus_pathfinder: bool = false
+var bonus_pinning: bool = false
+var bonus_flanking: bool = false
+var bonus_brutal_charge: bool = false
+var bonus_trample: bool = false
+var bonus_outrider: bool = false
+var bonus_aura: bool = false
+var bonus_leadership: bool = false
+var bonus_command: bool = false
+var bonus_royal_guard: bool = false
+var moves_this_turn: int = 0
+var facing: Vector2i = Vector2i(0, 1)
+var leadership_xp_bonus: bool = false
 
-# ─── Constructor ─────────────────────────────────────────────────────────────────
-func setup(p_name: String, p_type: int, p_owner: int, _p_level: int = 1) -> void:
+var visual_pos: Vector2 = Vector2.ZERO
+var visual_scale: float = 1.0
+var visual_alpha: float = 1.0
+var visual_flash: float = 0.0
+var visual_flash_color: Color = Color(0.95, 0.80, 0.20)
+
+func setup(p_name: String, p_type: int, p_owner: int, p_level: int = 1) -> void:
 	unit_name = p_name
 	unit_type = p_type
-	owner_id  = p_owner
-	level     = Level.BRONZE
+	owner_id = p_owner
+	level = clampi(p_level, Level.BRONZE, get_max_level())
 	_apply_stats()
 
 func get_max_hp() -> int:
 	match unit_type:
 		UnitType.WARRIOR:
 			match level:
-				Level.BRONZE: return 13
-				Level.SILVER: return 24
-				Level.GOLD:   return 38
+				Level.BRONZE: return 18
+				Level.SILVER: return 32
+				Level.GOLD: return 48
+				Level.PLATINUM: return 64
+				Level.DIAMOND: return 82
 		UnitType.ARCHER:
 			match level:
-				Level.BRONZE: return 8
-				Level.SILVER: return 14
-				Level.GOLD:   return 22
+				Level.BRONZE: return 11
+				Level.SILVER: return 18
+				Level.GOLD: return 28
+				Level.PLATINUM: return 37
+				Level.DIAMOND: return 48
 		UnitType.LANCER:
 			match level:
-				Level.BRONZE: return 15
-				Level.SILVER: return 28
-				Level.GOLD:   return 43
+				Level.BRONZE: return 20
+				Level.SILVER: return 36
+				Level.GOLD: return 54
+				Level.PLATINUM: return 71
+				Level.DIAMOND: return 90
 		UnitType.RIDER:
 			match level:
-				Level.BRONZE: return 12
-				Level.SILVER: return 22
-				Level.GOLD:   return 34
+				Level.BRONZE: return 16
+				Level.SILVER: return 28
+				Level.GOLD: return 42
+				Level.PLATINUM: return 56
+				Level.DIAMOND: return 72
 	return 5
 
 func _apply_stats() -> void:
-	max_hp       = get_max_hp()
-	move_range   = BASE_MOVE.get(unit_type, 3)
-	hp           = max_hp
+	max_hp = get_max_hp()
+	move_range = BASE_MOVE.get(unit_type, 3)
+	hp = max_hp
 	attack_range = get_default_attack_range()
 
-# ─── Combat ──────────────────────────────────────────────────────────────────────
 func take_damage(amount: int) -> bool:
-	hp = maxi(0, hp - amount)
+	var reduction: int = defense_buff + (1 if bonus_resistant else 0)
+	var actual: int = maxi(0, amount - reduction)
+	hp = maxi(0, hp - actual)
 	return hp == 0
-
 
 func set_hex_cell(cell: Vector2i) -> void:
 	current_hex_cell = cell
 
-
 func clear_hex_cell() -> void:
 	current_hex_cell = Vector2i(-1, -1)
-
 
 func get_hex_cell() -> Vector2i:
 	return current_hex_cell
 
-
 func get_base_attack_count() -> int:
-	return BASE_ATTACKS_PER_COMBAT.get(unit_type, 2)
-
+	return BASE_ATTACKS_PER_COMBAT.get(unit_type, 2) + (1 if bonus_cleaver or bonus_trample else 0)
 
 func get_terrain_attack_modifier(terrain_type: int) -> int:
 	return TERRAIN_ATTACK_MODIFIERS.get(terrain_type, 0)
 
-
 func get_attack_count_for_terrain(terrain_type: int) -> int:
-	return clampi(get_base_attack_count() + get_terrain_attack_modifier(terrain_type), 1, 6)
+	return maxi(1, clampi(get_base_attack_count() + get_terrain_attack_modifier(terrain_type), 1, 6) - attack_debuff)
 
+func get_ranged_attack_count_for_terrain(terrain_type: int) -> int:
+	var base: int = BASE_RANGED_ATTACKS_PER_COMBAT.get(unit_type, get_base_attack_count())
+	if bonus_volley:
+		base += 1
+	return maxi(1, clampi(base + get_terrain_attack_modifier(terrain_type), 1, 6) - attack_debuff)
 
 func get_damage_scale_per_hit() -> float:
 	var table: Array = DAMAGE_SCALE_PER_HIT.get(unit_type, [])
@@ -188,51 +233,79 @@ func get_damage_scale_per_hit() -> float:
 	var idx: int = clampi(level - 1, 0, table.size() - 1)
 	return float(table[idx])
 
-# ─── Experience & levelling ──────────────────────────────────────────────────────
 func get_exp_required() -> int:
-	match level:
-		Level.BRONZE: return 10
-		Level.SILVER: return 15
-		_:            return 20
+	var curve: Array = EXP_REQUIRED_BY_LEVEL.get(unit_type, [12, 18, 24, 30])
+	var idx: int = clampi(level - 1, 0, curve.size() - 1)
+	return int(curve[idx])
 
 func get_max_level() -> int:
-	return Level.GOLD
+	return Level.DIAMOND
 
 func gain_exp(amount: int) -> void:
-	experience += amount
+	gain_exp_with_result(amount)
+
+func gain_exp_with_result(amount: int) -> Dictionary:
+	var gained: int = maxi(0, amount)
+	var previous_level: int = level
+	if gained <= 0:
+		return {
+			"gained": 0,
+			"leveled_up": false,
+			"previous_level": previous_level,
+			"current_level": level,
+			"current_exp": experience,
+			"required_exp": get_exp_required(),
+			"hp": hp,
+			"max_hp": max_hp,
+		}
+	experience += gained
+	var leveled_up: bool = false
 	if experience >= get_exp_required():
 		experience = 0
-		hp  = max_hp   # full heal
 		if level < get_max_level():
 			_level_up()
+			leveled_up = true
 		else:
-			# Max level: just heal, no further promotion
 			AudioManager.play_level_up()
 			VFXManager.flash_unit(self, Color(0.95, 0.82, 0.20))
+	return {
+		"gained": gained,
+		"leveled_up": leveled_up,
+		"previous_level": previous_level,
+		"current_level": level,
+		"current_exp": experience,
+		"required_exp": get_exp_required(),
+		"hp": hp,
+		"max_hp": max_hp,
+	}
 
 func _level_up() -> void:
-	level       += 1
-	max_hp       = get_max_hp()
-	hp           = max_hp
+	var previous_hp: int = hp
+	level += 1
+	max_hp = get_max_hp()
+	var level_up_heal: int = maxi(2, int(round(float(max_hp) * 0.50)))
+	hp = mini(max_hp, previous_hp + level_up_heal)
 	attack_range = get_default_attack_range()
-	print("[Unit] %s subió a %s! HP:%d/%d MOV:%d" % [
+	BonusSystem.reapply_stat_bonuses(self)
+	print("[Unit] %s subio a %s! HP:%d/%d MOV:%d" % [
 		unit_name, _level_name(), hp, max_hp, move_range
 	])
 	AudioManager.play_level_up()
 	VFXManager.particles_level_up(visual_pos)
 	VFXManager.flash_unit(self, Color(0.95, 0.82, 0.20))
+	BonusSystem.queue_bonus_selection(self)
 
 func _level_name() -> String:
 	match level:
-		Level.BRONZE:  return "BRONCE"
-		Level.SILVER:  return "PLATA"
-		Level.GOLD:    return "ORO"
+		Level.BRONZE: return "BRONCE"
+		Level.SILVER: return "PLATA"
+		Level.GOLD: return "ORO"
+		Level.PLATINUM: return "PLATINO"
 		Level.DIAMOND: return "DIAMANTE"
-		_:             return str(level)
+		_: return str(level)
 
-# ─── Movement ────────────────────────────────────────────────────────────────────
 func get_moves_left() -> int:
-	return move_range if not moved else 0
+	return (move_range + move_bonus) if not moved else 0
 
 func use_move(_cost: int = 1) -> void:
 	moved = true
@@ -241,10 +314,16 @@ func exhaust() -> void:
 	moved = true
 
 func reset_moves() -> void:
-	moved        = false
+	moved = false
 	has_attacked = false
+	move_bonus = 0
+	extra_attacks = 1 if bonus_javelin_expert else 0
+	attack_debuff = 0
+	defense_buff = 0
+	untargetable = false
+	moves_this_turn = 0
+	leadership_xp_bonus = false
 
-# ─── Dice ────────────────────────────────────────────────────────────────────────
 func get_melee_dice() -> Array:
 	var table: Array = UNIT_MELEE_DICE.get(unit_type, [])
 	if table.is_empty():
@@ -262,10 +341,10 @@ func get_ranged_dice() -> Array:
 	return [] if die == null else [die]
 
 func has_ranged_attack() -> bool:
-	return not get_ranged_dice().is_empty()
+	return has_extended_attack_range() and not get_ranged_dice().is_empty()
 
 func has_extended_attack_range() -> bool:
-	return unit_type == MASTER_UNIT_TYPE or unit_type == UnitType.ARCHER
+	return unit_type == MASTER_UNIT_TYPE or unit_type == UnitType.ARCHER or unit_type == UnitType.LANCER
 
 func get_default_attack_range() -> int:
 	return 2 if has_extended_attack_range() else 1
@@ -273,13 +352,12 @@ func get_default_attack_range() -> int:
 func can_attack_at_distance(distance: int) -> bool:
 	if distance <= 1:
 		return true
-	return distance == 2 and has_extended_attack_range() and has_ranged_attack()
+	return distance <= attack_range and has_extended_attack_range() and has_ranged_attack()
 
 func roll_dice(color: int) -> int:
 	var faces: Array = DICE.get(color, [0])
 	return faces[randi() % faces.size()]
 
-# ─── Counter system ──────────────────────────────────────────────────────────────
 static func get_damage_multiplier(attacker_type: int, defender_type: int) -> float:
 	for pair: Array in COUNTER_CHART:
 		if pair[0] == attacker_type and pair[1] == defender_type:
@@ -288,7 +366,6 @@ static func get_damage_multiplier(attacker_type: int, defender_type: int) -> flo
 			return 0.60
 	return 1.0
 
-# ─── Debug ───────────────────────────────────────────────────────────────────────
 func stats_string() -> String:
 	return "[%s] %s (P%d) | %s | HP:%d/%d | MOV:%d(%s) | HIT:%d | EXP:%d/%d" % [
 		TYPE_NAMES.get(unit_type, "?"), unit_name, owner_id,

@@ -94,13 +94,13 @@ func _build_player_side(player: int, parent: Control) -> Array:
 	lbl.vertical_alignment   = VERTICAL_ALIGNMENT_CENTER
 	lbl.custom_minimum_size  = Vector2(0, 44)
 	lbl.add_theme_font_size_override("font_size", 26)
-	lbl.add_theme_color_override("font_color", PLAYER_COLORS[player - 1])
+	lbl.add_theme_color_override("font_color", GameData.get_player_color(player))
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(lbl)
 
 	# One card per faction
 	var cards: Array = []
-	for f: int in [FactionData.Faction.GAUCHOS, FactionData.Faction.MILITARES]:
+	for f: int in FactionData.get_all_faction_ids():
 		var card := _build_faction_card(f, player)
 		vbox.add_child(card)
 		cards.append(card)

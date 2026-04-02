@@ -3,6 +3,7 @@ extends CanvasLayer
 const UnitScript := preload("res://scripts/Unit.gd")
 const SummonManagerScript := preload("res://scripts/SummonManager.gd")
 const TutorialOutlineScript := preload("res://scripts/TutorialOutline.gd")
+const TUTORIAL_ARROW_TEXTURE := preload("res://assets/sprites/ui/tutorial/tutorial_arrow_pixel.png")
 
 signal unit_type_chosen(unit_type: int)
 signal cancelled()
@@ -203,6 +204,21 @@ func _build_card(unit_type: int, rel_pos: Vector2) -> Button:
 	tutorial_outline.size = btn.size + Vector2(12.0, 12.0)
 	tutorial_outline.visible = false
 	btn.add_child(tutorial_outline)
+
+	var tutorial_arrow := TextureRect.new()
+	tutorial_arrow.name = "TutorialArrow"
+	tutorial_arrow.texture = TUTORIAL_ARROW_TEXTURE
+	tutorial_arrow.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	tutorial_arrow.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tutorial_arrow.stretch_mode = TextureRect.STRETCH_SCALE
+	var arrow_size: Vector2 = TUTORIAL_ARROW_TEXTURE.get_size() * 2.5
+	tutorial_arrow.size = arrow_size if arrow_size != Vector2.ZERO else Vector2(20.0, 20.0)
+	tutorial_arrow.pivot_offset = tutorial_arrow.size * 0.5
+	tutorial_arrow.position = Vector2(btn.size.x * 0.5 - tutorial_arrow.size.x * 0.5, 6.0)
+	tutorial_arrow.modulate = Color(1.0, 0.88, 0.24, 0.96)
+	tutorial_arrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tutorial_arrow.visible = false
+	btn.add_child(tutorial_arrow)
 
 	var portrait_frame := ColorRect.new()
 	portrait_frame.position = Vector2(16.0, 16.0)
@@ -407,6 +423,7 @@ func _update_tutorial_card_focus() -> void:
 		if card == null:
 			continue
 		var is_target: bool = visible and unit_type == _tutorial_focus_unit_type
+		var bob: float = sin(Time.get_ticks_msec() * 0.006) * 4.0
 		var glow := card.get_node_or_null("TutorialGlow") as ColorRect
 		if glow != null:
 			glow.visible = is_target
@@ -415,6 +432,11 @@ func _update_tutorial_card_focus() -> void:
 		var outline := card.get_node_or_null("TutorialOutline") as Control
 		if outline != null:
 			outline.visible = is_target
+		var arrow := card.get_node_or_null("TutorialArrow") as TextureRect
+		if arrow != null:
+			arrow.visible = is_target
+			if is_target:
+				arrow.position = Vector2(card.size.x * 0.5 - arrow.size.x * 0.5, 6.0 + bob)
 
 func _make_panel(pos: Vector2, sz: Vector2) -> Panel:
 	var panel := Panel.new()
@@ -506,14 +528,16 @@ func _format_dice_row(dice: Array) -> String:
 
 func _dice_color_name(die_color: int) -> String:
 	match die_color:
-		UnitScript.DiceColor.RED:
-			return "R"
-		UnitScript.DiceColor.YELLOW:
-			return "Y"
-		UnitScript.DiceColor.GREEN:
-			return "G"
-		UnitScript.DiceColor.BLUE:
-			return "B"
+		UnitScript.DiceColor.BRONZE:
+			return "Br"
+		UnitScript.DiceColor.SILVER:
+			return "Pl"
+		UnitScript.DiceColor.GOLD:
+			return "Or"
+		UnitScript.DiceColor.PLATINUM:
+			return "Pt"
+		UnitScript.DiceColor.DIAMOND:
+			return "Di"
 		_:
 			return "-"
 

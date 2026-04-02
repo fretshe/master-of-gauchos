@@ -1,15 +1,17 @@
 extends Node
 
 # ─── Streams ──────────────────────────────────────────────────────────────────
-var music_menu   = preload("res://assets/menu.mp3")
-var music_blue   = preload("res://assets/team_blue.mp3")
-var music_red    = preload("res://assets/team_red.mp3")
-var music_combat = preload("res://assets/combat.mp3")
+var music_menu      = preload("res://assets/menu.mp3")
+var music_gaucho    = preload("res://assets/music/team_gaucho.mp3")
+var music_militares = preload("res://assets/music/team_militares.mp3")
+var music_nativos   = preload("res://assets/music/team_nativos.mp3")
+var music_brujos    = preload("res://assets/music/team_brujos.mp3")
+var music_combat    = preload("res://assets/combat.mp3")
 
 # ─── State ────────────────────────────────────────────────────────────────────
 var _player:                  AudioStreamPlayer
 var _combat_player:           AudioStreamPlayer
-var _volume:                  float       = 0.8
+var _volume:                  float       = 0.6
 var _muted:                   bool        = false
 var _combat_ducked:           bool        = false
 var _transition_tween:        Tween       = null
@@ -25,7 +27,7 @@ func _ready() -> void:
 	_combat_player.volume_db = -80.0
 	add_child(_combat_player)
 	# Enable looping on all tracks
-	for s: AudioStream in [music_menu, music_blue, music_red, music_combat]:
+	for s: AudioStream in [music_menu, music_gaucho, music_militares, music_nativos, music_brujos, music_combat]:
 		(s as AudioStreamMP3).loop = true
 
 # ─── Public API ───────────────────────────────────────────────────────────────
@@ -59,9 +61,17 @@ func is_muted() -> bool:
 func play_menu_music() -> void:
 	_play_stream(music_menu)
 
-## Plays team_blue.mp3 for odd players and team_red.mp3 for even players.
+## Plays the battle track matching the player's faction.
 func play_battle_music(player_id: int) -> void:
-	_play_stream(music_blue if player_id % 2 == 1 else music_red)
+	var faction: int = GameData.get_faction_for_player(player_id)
+	var stream: AudioStream
+	match faction:
+		FactionData.Faction.GAUCHOS:   stream = music_gaucho
+		FactionData.Faction.MILITARES: stream = music_militares
+		FactionData.Faction.INDIOS:    stream = music_nativos
+		FactionData.Faction.BRUJOS:    stream = music_brujos
+		_:                             stream = music_gaucho
+	_play_stream(stream)
 
 ## Lowers the current turn music smoothly during combat.
 func play_combat_music() -> void:

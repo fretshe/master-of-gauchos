@@ -3,5 +3,5 @@
 [ext_resource type="Script" path="res://scripts/CardHand.gd" id="1_cardhand"]
 
 [node name="CardHand" type="CanvasLayer"]
-layer = 11
+layer = 10
 script = ExtResource("1_cardhand")

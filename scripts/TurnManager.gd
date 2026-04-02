@@ -46,6 +46,9 @@ func end_turn() -> void:
 	print("[TurnManager] Turn %d — Player %d's turn begins." % [turn_number, current_player])
 
 	_reset_units_for(current_player)
+	_apply_aura_heals(current_player)
+	_apply_leadership_marks(current_player)
+	CardManager.process_effects(current_player)
 
 	# Collect income for the newly active player
 	if resource_manager != null:
@@ -161,6 +164,45 @@ func _declare_winner(winner_id: int) -> void:
 	else:
 		print("[TurnManager] *** GAME OVER — Player %d wins! ***" % winner_id)
 	emit_signal("game_over", winner_id)
+
+# ─── Bonus passives ─────────────────────────────────────────────────────────────
+func _apply_aura_heals(for_player: int) -> void:
+	if hex_grid == null:
+		return
+	for unit_variant: Variant in hex_grid.get_all_units():
+		var master: Unit = unit_variant as Unit
+		if master == null or not (master is Master):
+			continue
+		if master.owner_id != for_player or not master.bonus_aura:
+			continue
+		var master_cell: Vector2i = master.get_hex_cell()
+		for nb: Vector2i in hex_grid.get_neighbors_of(master_cell):
+			var ally: Unit = hex_grid.get_unit_at(nb.x, nb.y)
+			if ally != null and ally.owner_id == for_player and ally.hp < ally.max_hp:
+				ally.hp = mini(ally.hp + 1, ally.max_hp)
+
+func _apply_leadership_marks(for_player: int) -> void:
+	if hex_grid == null:
+		return
+	# First clear all marks for this player
+	for unit_variant: Variant in hex_grid.get_all_units():
+		var unit: Unit = unit_variant as Unit
+		if unit != null and unit.owner_id == for_player:
+			unit.leadership_xp_bonus = false
+	# Then mark units within radius 2 of each leadership master
+	for unit_variant: Variant in hex_grid.get_all_units():
+		var master: Unit = unit_variant as Unit
+		if master == null or not (master is Master):
+			continue
+		if master.owner_id != for_player or not master.bonus_leadership:
+			continue
+		var master_cell: Vector2i = master.get_hex_cell()
+		for ally_variant: Variant in hex_grid.get_all_units():
+			var ally: Unit = ally_variant as Unit
+			if ally == null or ally.owner_id != for_player or ally == master:
+				continue
+			if hex_grid.get_hex_distance(master_cell, ally.get_hex_cell()) <= 2:
+				ally.leadership_xp_bonus = true
 
 func serialize_state() -> Dictionary:
 	return {

@@ -293,13 +293,17 @@ func _hex_distance(a: Vector2i, b: Vector2i) -> int:
 	return (abs(aq - bq) + abs(ar - br) + abs(as_ - bs)) / 2
 
 func _get_neighbors(col: int, row: int) -> Array:
-	var offsets: Array = NEIGHBORS_ODD if col % 2 == 1 else NEIGHBORS_EVEN
-	var result: Array  = []
-	for off: Vector2i in offsets:
-		var nc := col + off.x
-		var nr := row + off.y
-		if nc >= 0 and nc < COLS and nr >= 0 and nr < ROWS:
-			result.append(Vector2i(nc, nr))
+	var origin := Vector2i(col, row)
+	var result: Array = []
+	for dc: int in range(-1, 2):
+		for dr: int in range(-1, 2):
+			if dc == 0 and dr == 0:
+				continue
+			var candidate := Vector2i(col + dc, row + dr)
+			if candidate.x < 0 or candidate.x >= COLS or candidate.y < 0 or candidate.y >= ROWS:
+				continue
+			if _hex_distance(origin, candidate) == 1:
+				result.append(candidate)
 	return result
 
 ## Returns the movement point cost to enter a cell based on its terrain.
@@ -362,6 +366,8 @@ func _compute_highlights(col: int, row: int, unit: Unit) -> void:
 			if terrain == Terrain.WATER or terrain == Terrain.CORDILLERA:
 				continue
 			var step: int     = 2 if (terrain == Terrain.MOUNTAIN or terrain == Terrain.FOREST) else 1
+			if unit.bonus_pathfinder and (terrain == Terrain.MOUNTAIN or terrain == Terrain.FOREST):
+				step = 1
 			var new_cost: int = cost + step
 
 			var nb_unit: Unit = _units.get(nb, null)
@@ -381,11 +387,13 @@ func _compute_highlights(col: int, row: int, unit: Unit) -> void:
 				_attack_cells.append(nb)
 
 	# Ranged attack cells: Archer/Master — enemies at exactly hex-distance 2 (orange)
-	if unit.can_attack_at_distance(2):
+	for distance in range(2, maxi(2, unit.attack_range) + 1):
+		if not unit.can_attack_at_distance(distance):
+			continue
 		for c2 in range(COLS):
 			for r2 in range(ROWS):
 				var target := Vector2i(c2, r2)
-				if _hex_distance(Vector2i(col, row), target) != 2:
+				if _hex_distance(Vector2i(col, row), target) != distance:
 					continue
 				var t_unit: Unit = _units.get(target, null)
 				if t_unit != null and t_unit.owner_id != unit.owner_id:

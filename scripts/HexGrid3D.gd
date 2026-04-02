@@ -16,6 +16,12 @@ const GRASS_TILE_TEXTURES: Array[Texture2D] = [
 	preload("res://assets/sprites/tiles/grass_03.png"),
 	preload("res://assets/sprites/tiles/grass_04.png"),
 ]
+const FOREST_TILE_TEXTURES: Array[Texture2D] = [
+	preload("res://assets/sprites/tiles/forest_01.png"),
+	preload("res://assets/sprites/tiles/forest_02.png"),
+	preload("res://assets/sprites/tiles/forest_03.png"),
+	preload("res://assets/sprites/tiles/forest_04.png"),
+]
 
 # ─── Constants ──────────────────────────────────────────────────────────────────
 var   COLS:     int   = 24
@@ -63,6 +69,19 @@ const COMBAT_STAGE_WALL_UNIT_HEIGHT: float = 1.45
 const COMBAT_STAGE_WALL_THICKNESS: float = 0.05
 const COMBAT_STAGE_WALL_SIDE_COUNT: int = 2
 const COMBAT_STAGE_WALL_ALPHA: float = 0.94
+const ENEMY_TOWER_CAPTURE_EXP_REWARD: int = 1
+const CLOUD_SHADOW_SCALE_LARGE: float = 0.07
+const CLOUD_SHADOW_SCALE_SMALL: float = 0.12
+const CLOUD_SHADOW_SPEED_LARGE: float = 0.022
+const CLOUD_SHADOW_SPEED_SMALL: float = 0.030
+const CLOUD_SHADOW_STRENGTH_LARGE: float = 0.32
+const CLOUD_SHADOW_STRENGTH_SMALL: float = 0.38
+const CLOUD_SHADOW_SOFTNESS: float = 0.11
+const CLOUD_PIXEL_SIZE_LARGE: float = 0.34
+const CLOUD_PIXEL_SIZE_SMALL: float = 0.22
+const CLOUD_SUNBREAK_STRENGTH_LARGE: float = 0.08
+const CLOUD_SUNBREAK_STRENGTH_SMALL: float = 0.11
+const CLOUD_SUNBREAK_TINT: Color = Color(1.12, 1.06, 0.88, 1.0)
 
 # Flat-top odd-q neighbor offsets
 const NEIGHBORS_EVEN: Array = [
@@ -86,6 +105,7 @@ signal master_placement_confirmed(col: int, row: int, unit_type: int, player_id:
 signal enemy_inspected(enemy: Unit, multiplier: float)
 signal combat_resolved(attacker: Unit, defender: Unit, result: Dictionary)
 signal card_target_selected(card_index: int, target_unit: Unit)
+signal card_tower_selected(card_index: int, tower_cell: Vector2i)
 signal unit_hovered(unit: Unit)
 signal unit_hover_cleared()
 signal cell_hovered(cell: Vector2i)
@@ -96,6 +116,7 @@ var current_player:  int = 1
 var combat_manager       = null
 var resource_manager     = null
 var camera_override: Camera3D = null
+var _terrain_collision_shapes: Dictionary = {}   # terrain_int -> ConvexPolygonShape3D
 
 var _map_terrain:    Array      = []
 var _tile_instances: Dictionary = {}   # Vector2i → MeshInstance3D
@@ -122,6 +143,10 @@ var _range_cells:       Array[Vector2i] = []   # internal selection/move/attack 
 var _tutorial_ring: Node3D = null
 var _tutorial_ring_material: StandardMaterial3D = null
 var _tutorial_ring_cell: Vector2i = Vector2i(-1, -1)
+var _move_outline_root: Node3D = null
+var _move_outline_material: StandardMaterial3D = null
+var _summon_outline_root: Node3D = null
+var _summon_outline_material: StandardMaterial3D = null
 
 var _animating: bool = false
 var _is_night_visuals: bool = false
@@ -136,7 +161,7 @@ var _grass_cluster_strengths: Array[float] = []
 var _combat_stage_root: Node3D = null
 var _combat_stage_tween: Tween = null
 var _combat_wall_system: CombatHexWallSystem = null
-const TILE_DIM_FACTOR_FOCUSED: float = 0.2
+const TILE_DIM_FACTOR_FOCUSED: float = 0.78
 
 @export var combat_wall_scene: PackedScene = preload("res://scenes/CombatHexWall.tscn")
 @export var combat_wall_extra_height: float = COMBAT_STAGE_WALL_EXTRA_HEIGHT
@@ -161,12 +186,13 @@ var _card_target_player: int = 0
 var _card_target_index: int = -1
 var _card_target_type: String = ""
 var _card_target_cells: Array[Vector2i] = []
+var _card_target_towers: bool = false
 
 var units_container: Node3D = null   # set by Main3D before setup_units()
 
 # Shared outline next_pass materials (one per width — cached to avoid per-tile duplication)
-var _terrain_outline_mat: ShaderMaterial = null
-var _tower_outline_mat:   ShaderMaterial = null
+var _terrain_outline_mat: StandardMaterial3D = null
+var _tower_outline_mat:   StandardMaterial3D = null
 
 # Inline outline shader: inverted-hull, expands only side normals (skips top/bottom faces)
 const _OUTLINE_CODE: String = """shader_type spatial;
@@ -225,10 +251,34 @@ func place_unit(unit: Unit, col: int, row: int, defer_tower_capture: bool = fals
 	unit.set_hex_cell(cell)
 	_add_team_ring(cell, unit.owner_id)
 	_update_team_ring_state(cell, unit)
-	if defer_tower_capture:
-		var tower: Tower = _towers.get(cell, null)
-		if tower != null and tower.owner_id != unit.owner_id:
+
+	var tower: Tower = _towers.get(cell, null)
+	if tower != null and tower.owner_id != unit.owner_id:
+		if defer_tower_capture:
 			_pending_tower_captures[cell] = unit.owner_id
+		else:
+			# Immediate capture — happens right when the unit is placed (summon on tower)
+			var previous_owner_id: int = tower.owner_id
+			var capture_bonus: int = tower.capture(unit.owner_id)
+			if resource_manager != null and capture_bonus > 0:
+				resource_manager.add_essence(unit.owner_id, capture_bonus)
+			var tower_exp_reward: int = (ENEMY_TOWER_CAPTURE_EXP_REWARD if previous_owner_id > 0 else 0) + (2 if unit.bonus_raider else 0)
+			var exp_result: Dictionary = unit.gain_exp_with_result(tower_exp_reward)
+			var placed_renderer: Node3D = _unit_renderers.get(cell, null)
+			if placed_renderer != null and placed_renderer.has_method("set_health_bar_values"):
+				placed_renderer.call("set_health_bar_values", unit.hp, unit.max_hp, true)
+			_update_tower_visual(cell)
+			emit_signal("tower_captured", tower.tower_name, unit.owner_id)
+			AudioManager.play_capture()
+			if capture_bonus > 0:
+				AudioManager.play_essence()
+			if int(exp_result.get("gained", 0)) > 0:
+				VFXManager.show_world_text_label(
+					_get_unit_world_anchor(cell),
+					"+%d XP" % int(exp_result.get("gained", 0)),
+					Color(0.84, 0.42, 1.0, 1.0),
+					48, 1.85
+				)
 
 func get_unit_at(col: int, row: int) -> Unit:
 	return _units.get(Vector2i(col, row), null)
@@ -236,8 +286,33 @@ func get_unit_at(col: int, row: int) -> Unit:
 func get_all_units() -> Array:
 	return _units.values()
 
+func _sanitize_loaded_attack_range(unit: Unit, saved_attack_range: int) -> int:
+	var default_attack_range: int = unit.get_default_attack_range()
+	if not unit.has_ranged_attack():
+		return 1
+	return maxi(default_attack_range, saved_attack_range)
+
+func get_neighbors_of(cell: Vector2i) -> Array:
+	return _get_neighbors(cell.x, cell.y)
+
+func get_hex_distance(a: Vector2i, b: Vector2i) -> int:
+	return _hex_distance(a, b)
+
 func get_all_towers() -> Array:
 	return _towers.values()
+
+func get_enemy_units_near_towers(player_id: int) -> Array:
+	var result: Array = []
+	for cell_value: Variant in _towers.keys():
+		var cell: Vector2i = cell_value as Vector2i
+		var tower: Tower = _towers.get(cell, null)
+		if tower == null or tower.owner_id != player_id:
+			continue
+		for nb: Vector2i in _get_neighbors(cell.x, cell.y):
+			var unit: Unit = _units.get(nb, null)
+			if unit != null and unit.owner_id != player_id and unit not in result:
+				result.append(unit)
+	return result
 
 func get_terrain_at(col: int, row: int) -> int:
 	if row < 0 or row >= _map_terrain.size():
@@ -249,6 +324,20 @@ func get_terrain_at(col: int, row: int) -> int:
 
 func get_tower_at(col: int, row: int) -> Tower:
 	return _towers.get(Vector2i(col, row), null)
+
+func set_tower_special_effect(cell: Vector2i, effect_type: String, effect_owner_id: int, effect_value: int) -> void:
+	var tower: Tower = _towers.get(cell, null)
+	if tower == null:
+		return
+	tower.set_special_effect(effect_type, effect_owner_id, effect_value)
+	_update_tower_visual(cell)
+
+func clear_tower_special_effect(cell: Vector2i) -> void:
+	var tower: Tower = _towers.get(cell, null)
+	if tower == null:
+		return
+	tower.clear_special_effect()
+	_update_tower_visual(cell)
 
 func resolve_end_turn_tower_captures(player_id: int) -> void:
 	var pending_cells: Array[Vector2i] = []
@@ -264,14 +353,28 @@ func resolve_end_turn_tower_captures(player_id: int) -> void:
 			continue
 		if unit.owner_id != player_id or tower.owner_id == unit.owner_id:
 			continue
+		var previous_owner_id: int = tower.owner_id
 		var capture_bonus: int = tower.capture(unit.owner_id)
 		if resource_manager != null and capture_bonus > 0:
 			resource_manager.add_essence(unit.owner_id, capture_bonus)
+		var tower_exp_reward: int = (ENEMY_TOWER_CAPTURE_EXP_REWARD if previous_owner_id > 0 else 0) + (2 if unit.bonus_raider else 0)
+		var exp_result: Dictionary = unit.gain_exp_with_result(tower_exp_reward)
+		var renderer: Node3D = _unit_renderers.get(cell, null)
+		if renderer != null and renderer.has_method("set_health_bar_values"):
+			renderer.call("set_health_bar_values", unit.hp, unit.max_hp, true)
 		_update_tower_visual(cell)
 		emit_signal("tower_captured", tower.tower_name, unit.owner_id)
 		AudioManager.play_capture()
 		if capture_bonus > 0:
 			AudioManager.play_essence()
+		if int(exp_result.get("gained", 0)) > 0:
+			VFXManager.show_world_text_label(
+				_get_unit_world_anchor(cell),
+				"+%d XP" % int(exp_result.get("gained", 0)),
+				Color(0.84, 0.42, 1.0, 1.0),
+				48,
+				1.85
+			)
 
 func heal_units_on_owned_towers(player_id: int, amount: int = 1) -> int:
 	var healed_count: int = 0
@@ -298,6 +401,22 @@ func heal_units_on_owned_towers(player_id: int, amount: int = 1) -> int:
 		)
 		healed_count += 1
 	return healed_count
+
+func heal_unit_on_cell(cell: Vector2i, amount: int) -> void:
+	var unit: Unit = _units.get(cell, null)
+	if unit == null or unit.hp >= unit.max_hp:
+		return
+	unit.hp = mini(unit.max_hp, unit.hp + amount)
+	var renderer: Node3D = _unit_renderers.get(cell, null)
+	if renderer != null and renderer.has_method("set_health_bar_values"):
+		renderer.call("set_health_bar_values", unit.hp, unit.max_hp, true)
+	VFXManager.show_world_text_label(
+		_get_unit_world_anchor(cell),
+		"Curación +%d" % amount,
+		Color(0.28, 1.0, 0.36, 1.0),
+		46,
+		1.55
+	)
 
 func get_units_for_player(player_id: int) -> Array[Unit]:
 	var result: Array[Unit] = []
@@ -396,6 +515,21 @@ func get_cell_for_unit(unit: Unit) -> Vector2i:
 			return cell
 	return Vector2i(-1, -1)
 
+func get_unit_world_position(unit: Unit) -> Vector3:
+	var cell: Vector2i = get_cell_for_unit(unit)
+	if cell == Vector2i(-1, -1):
+		return Vector3.ZERO
+	var renderer: Node3D = _unit_renderers.get(cell, null)
+	if renderer != null:
+		return renderer.global_position
+	return _get_unit_world_anchor(cell)
+
+func get_unit_renderer(unit: Unit) -> Node3D:
+	var cell: Vector2i = get_cell_for_unit(unit)
+	if cell == Vector2i(-1, -1):
+		return null
+	return _unit_renderers.get(cell, null)
+
 func remove_unit(unit: Unit) -> void:
 	var cell: Vector2i = get_cell_for_unit(unit)
 	if cell == Vector2i(-1, -1):
@@ -463,10 +597,26 @@ func enter_card_target_mode(player_id: int, card_index: int, card: Dictionary) -
 	_card_target_mode = true
 	_card_target_player = player_id
 	_card_target_index = card_index
-	_card_target_type = str(card.get("type", ""))
+	if str(card.get("type", "")) == "faction":
+		_card_target_type = str(card.get("effect", ""))
+	else:
+		_card_target_type = str(card.get("type", ""))
 	_set_selection_focus(true)
 	clear_highlights()
 	_card_target_cells.clear()
+
+	if _card_target_type == "tower_heal":
+		_card_target_towers = true
+		for cell_value: Variant in _towers.keys():
+			var cell: Vector2i = cell_value as Vector2i
+			var tower: Tower = _towers.get(cell, null)
+			if tower == null or tower.owner_id != player_id:
+				continue
+			_card_target_cells.append(cell)
+			_set_highlight(cell, true, "card_tower_heal")
+			_highlighted_cells.append(cell)
+			_set_tower_target_glow(cell, true)
+		return
 
 	for unit_value: Variant in _units.values():
 		var unit: Unit = unit_value as Unit
@@ -478,8 +628,20 @@ func enter_card_target_mode(player_id: int, card_index: int, card: Dictionary) -
 				valid = unit.owner_id == player_id and unit.hp < unit.max_hp
 			"exp":
 				valid = unit.owner_id == player_id
+			"refresh":
+				valid = unit.owner_id == player_id and (unit.moved or unit.has_attacked)
 			"damage":
 				valid = unit.owner_id != player_id and not (unit is Master)
+			"immobilize", "poison", "attack_debuff":
+				valid = unit.owner_id != player_id and not (unit is Master)
+			"swap_hp":
+				valid = unit.owner_id != player_id and not (unit is Master)
+			"extra_move":
+				valid = unit.owner_id == player_id and not unit.moved
+			"double_attack":
+				valid = unit.owner_id == player_id and not unit.has_attacked
+			"defense_buff", "untargetable":
+				valid = unit.owner_id == player_id
 		if not valid:
 			continue
 		var cell: Vector2i = get_cell_for_unit(unit)
@@ -510,6 +672,7 @@ func clear_highlights() -> void:
 		if cell != _selected_cell:
 			_set_highlight(cell, false)
 	_highlighted_cells.clear()
+	_clear_summon_outline()
 
 func set_tutorial_focus_cell(cell: Vector2i) -> void:
 	if not _tile_materials.has(cell):
@@ -541,10 +704,18 @@ func _card_target_color() -> Color:
 	match _card_target_type:
 		"heal":
 			return Color(0.18, 0.84, 0.76, 1.0)
+		"refresh":
+			return Color(1.0, 0.84, 0.28, 1.0)
 		"damage":
 			return Color(0.96, 0.28, 0.28, 1.0)
 		"exp":
 			return Color(0.78, 0.34, 0.96, 1.0)
+		"immobilize", "poison", "attack_debuff", "swap_hp":
+			return Color(0.94, 0.34, 0.22, 1.0)
+		"extra_move", "double_attack", "defense_buff", "untargetable":
+			return Color(0.94, 0.74, 0.22, 1.0)
+		"tower_heal":
+			return Color(1.0, 0.82, 0.18, 1.0)
 		_:
 			return Color(1.0, 1.0, 1.0, 1.0)
 
@@ -574,12 +745,14 @@ func serialize_state() -> Dictionary:
 			"max_hp": unit.max_hp,
 			"move_range": unit.move_range,
 			"attack_range": unit.attack_range,
+			"active_bonuses": unit.active_bonuses.duplicate(),
 			"moved": unit.moved,
 			"has_attacked": unit.has_attacked,
 			"is_master": unit is Master,
 		}
 		if unit is Master:
 			unit_data["free_summon_used"] = bool((unit as Master).free_summon_used)
+			unit_data["faction"] = int((unit as Master).faction)
 		units.append(unit_data)
 
 	var towers: Array[Dictionary] = []
@@ -593,6 +766,9 @@ func serialize_state() -> Dictionary:
 			"tower_name": tower.tower_name,
 			"owner_id": tower.owner_id,
 			"income": tower.income,
+			"special_effect_type": tower.special_effect_type,
+			"special_effect_owner_id": tower.special_effect_owner_id,
+			"special_effect_value": tower.special_effect_value,
 		})
 
 	return {
@@ -642,6 +818,9 @@ func _restore_saved_towers(saved_towers: Array) -> void:
 		tower.tower_name = str(tower_data.get("tower_name", tower.tower_name))
 		tower.owner_id = int(tower_data.get("owner_id", tower.owner_id))
 		tower.income = int(tower_data.get("income", tower.income))
+		tower.special_effect_type = str(tower_data.get("special_effect_type", tower.special_effect_type))
+		tower.special_effect_owner_id = int(tower_data.get("special_effect_owner_id", tower.special_effect_owner_id))
+		tower.special_effect_value = int(tower_data.get("special_effect_value", tower.special_effect_value))
 		_update_tower_visual(cell)
 
 func _restore_saved_unit(unit_data: Dictionary) -> void:
@@ -657,11 +836,16 @@ func _restore_saved_unit(unit_data: Dictionary) -> void:
 	unit.max_hp = int(unit_data.get("max_hp", 1))
 	unit.hp = int(unit_data.get("hp", unit.max_hp))
 	unit.move_range = int(unit_data.get("move_range", 3))
-	unit.attack_range = unit.get_default_attack_range()
 	unit.moved = bool(unit_data.get("moved", false))
 	unit.has_attacked = bool(unit_data.get("has_attacked", false))
+	unit.active_bonuses = []
+	for bonus_value: Variant in unit_data.get("active_bonuses", []):
+		unit.active_bonuses.append(str(bonus_value))
 	if unit is Master:
+		(unit as Master).faction = int(unit_data.get("faction", 0))
 		(unit as Master).free_summon_used = bool(unit_data.get("free_summon_used", false))
+	unit.attack_range = _sanitize_loaded_attack_range(unit, int(unit_data.get("attack_range", unit.get_default_attack_range())))
+	BonusSystem.rebuild_bonus_flags(unit)
 	place_unit(unit, cell.x, cell.y, false)
 
 
@@ -698,19 +882,20 @@ func _hex_distance(a: Vector2i, b: Vector2i) -> int:
 	return (abs(aq - bq) + abs(ar - br) + abs(as_ - bs)) / 2
 
 func _get_neighbors(col: int, row: int) -> Array:
-	var offsets: Array = NEIGHBORS_ODD if col % 2 == 1 else NEIGHBORS_EVEN
-	var result:  Array = []
-	for off: Vector2i in offsets:
-		var nc: int = col + off.x
-		var nr: int = row + off.y
-		if nc >= 0 and nc < COLS and nr >= 0 and nr < ROWS:
-			result.append(Vector2i(nc, nr))
+	var origin: Vector2i = Vector2i(col, row)
+	var result: Array = []
+	for dc: int in range(-1, 2):
+		for dr: int in range(-1, 2):
+			if dc == 0 and dr == 0:
+				continue
+			var candidate: Vector2i = Vector2i(col + dc, row + dr)
+			if candidate.x < 0 or candidate.x >= COLS or candidate.y < 0 or candidate.y >= ROWS:
+				continue
+			if _hex_distance(origin, candidate) == 1:
+				result.append(candidate)
 	return result
 
 func _get_terrain_cost(col: int, row: int) -> int:
-	var t: int = _map_terrain[row][col]
-	if t == Terrain.MOUNTAIN or t == Terrain.FOREST:
-		return 2
 	return 1
 
 func _find_master_cell(player_id: int) -> Vector2i:
@@ -729,13 +914,16 @@ func _apply_selection_highlights() -> void:
 	for cell: Vector2i in _move_cells:
 		_set_highlight_range(cell, "move")
 	for cell: Vector2i in _attack_cells:
-		_set_highlight_range(cell, "attack")
+		var dist: int = _hex_distance(_selected_cell, cell) if _selected_cell != Vector2i(-1, -1) else 1
+		_set_highlight_range(cell, "attack_ranged" if dist > 1 else "attack")
+	_refresh_move_outline()
 
 func _clear_range_highlights() -> void:
 	_set_selection_focus(false)
 	for cell: Vector2i in _range_cells:
 		_set_highlight(cell, false)
 	_range_cells.clear()
+	_clear_move_outline()
 
 func _set_highlight_range(cell: Vector2i, mode: String) -> void:
 	if not _tile_materials.has(cell):
@@ -749,33 +937,45 @@ func _set_highlight(cell: Vector2i, on: bool, mode: String = "select") -> void:
 	if mat == null:
 		return
 	var terrain: int = _map_terrain[cell.y][cell.x]
+	var base_albedo: Color = _get_terrain_albedo_color(terrain)
 	if on:
 		match mode:
 			"move":
-				mat.set_shader_parameter("albedo_color",   TERRAIN_COLORS.get(terrain, Color.WHITE))
+				mat.set_shader_parameter("albedo_color",   base_albedo.lerp(Color(0.92, 1.0, 0.92), 0.34))
 				mat.set_shader_parameter("emission_color", Color.BLACK)
 			"attack":
-				mat.set_shader_parameter("albedo_color",   TERRAIN_COLORS.get(terrain, Color.WHITE))
+				mat.set_shader_parameter("albedo_color",   base_albedo)
 				mat.set_shader_parameter("emission_color", Color(0.55, 0.12, 0.12))
+			"attack_ranged":
+				mat.set_shader_parameter("albedo_color",   base_albedo)
+				mat.set_shader_parameter("emission_color", Color(0.55, 0.32, 0.04))
 			"summon":
-				mat.set_shader_parameter("albedo_color",   TERRAIN_COLORS.get(terrain, Color.WHITE))
+				mat.set_shader_parameter("albedo_color",   base_albedo.lerp(Color(0.98, 0.92, 1.0), 0.28))
 				mat.set_shader_parameter("emission_color", Color.BLACK)
-			"card_heal", "card_damage", "card_exp":
-				mat.set_shader_parameter("albedo_color",   TERRAIN_COLORS.get(terrain, Color.WHITE))
+			"card_heal", "card_damage", "card_exp", "card_refresh", \
+			"card_immobilize", "card_poison", "card_attack_debuff", "card_swap_hp", \
+			"card_extra_move", "card_double_attack", "card_defense_buff", "card_untargetable", \
+			"card_tower_heal":
+				mat.set_shader_parameter("albedo_color",   base_albedo)
 				mat.set_shader_parameter("emission_color", _card_target_color())
 			"tutorial":
-				mat.set_shader_parameter("albedo_color",   TERRAIN_COLORS.get(terrain, Color.WHITE))
+				mat.set_shader_parameter("albedo_color",   base_albedo)
 				mat.set_shader_parameter("emission_color", Color(1.0, 0.82, 0.18, 1.0))
 			_:
-				mat.set_shader_parameter("albedo_color",   TERRAIN_COLORS.get(terrain, Color.WHITE))
+				mat.set_shader_parameter("albedo_color",   base_albedo)
 				mat.set_shader_parameter("emission_color", Color(0.68, 0.52, 0.08))
 		var emission_strength: float = 0.0 if mode == "move" or mode == "summon" else 0.95
 		if mode == "tutorial":
 			emission_strength = 1.35
 		mat.set_shader_parameter("emission_strength", emission_strength)
-		mat.set_shader_parameter("dim_factor", 1.0)
+		var highlight_dim_factor: float = 1.0
+		if mode == "move":
+			highlight_dim_factor = 1.14
+		elif mode == "summon":
+			highlight_dim_factor = 1.10
+		mat.set_shader_parameter("dim_factor", highlight_dim_factor)
 	else:
-		mat.set_shader_parameter("albedo_color",      TERRAIN_COLORS.get(terrain, Color.WHITE))
+		mat.set_shader_parameter("albedo_color",      base_albedo)
 		mat.set_shader_parameter("emission_strength", 0.0)
 		mat.set_shader_parameter("emission_color", Color.BLACK)
 		mat.set_shader_parameter("dim_factor", TILE_DIM_FACTOR_FOCUSED if _selection_focus_active else 1.0)
@@ -822,6 +1022,7 @@ func _show_placement_hints() -> void:
 		if _is_valid_summon_cell(nb):
 			_set_highlight(nb, true, "summon")
 			_highlighted_cells.append(nb)
+	_refresh_summon_outline()
 
 func _show_master_placement_hints() -> void:
 	_clear_matchup_indicators()
@@ -832,6 +1033,7 @@ func _show_master_placement_hints() -> void:
 		if _is_valid_summon_cell(nb):
 			_set_highlight(nb, true, "summon")
 			_highlighted_cells.append(nb)
+	_refresh_summon_outline()
 
 # ─── Highlight computation (Dijkstra with terrain costs) ─────────────────────────
 func _compute_highlights(col: int, row: int, unit: Unit) -> void:
@@ -860,7 +1062,7 @@ func _compute_highlights(col: int, row: int, unit: Unit) -> void:
 			var terrain: int = _map_terrain[nb.y][nb.x]
 			if terrain == Terrain.WATER or terrain == Terrain.CORDILLERA:
 				continue
-			var step:     int = 2 if (terrain == Terrain.MOUNTAIN or terrain == Terrain.FOREST) else 1
+			var step:     int = 1
 			var new_cost: int = cost + step
 			var nb_unit:  Unit = _units.get(nb, null)
 
@@ -877,19 +1079,21 @@ func _compute_highlights(col: int, row: int, unit: Unit) -> void:
 	# Direct adjacency attack (attack without moving)
 	for nb: Vector2i in _get_neighbors(col, row):
 		var nb_unit: Unit = _units.get(nb, null)
-		if nb_unit != null and nb_unit.owner_id != unit.owner_id:
+		if nb_unit != null and nb_unit.owner_id != unit.owner_id and not nb_unit.untargetable:
 			if nb not in _attack_cells:
 				_attack_cells.append(nb)
 
-	# Ranged attack (Archer/Master only): distance 2
-	if unit.can_attack_at_distance(2):
+	# Ranged attack (Archer, Lancer, Nativos/Brujos Master): distance 2
+	for distance: int in range(2, maxi(2, unit.attack_range) + 1):
+		if not unit.can_attack_at_distance(distance):
+			continue
 		for c2: int in range(COLS):
 			for r2: int in range(ROWS):
 				var target: Vector2i = Vector2i(c2, r2)
-				if _hex_distance(Vector2i(col, row), target) != 2:
+				if _hex_distance(Vector2i(col, row), target) != distance:
 					continue
 				var t_unit: Unit = _units.get(target, null)
-				if t_unit != null and t_unit.owner_id != unit.owner_id:
+				if t_unit != null and t_unit.owner_id != unit.owner_id and not t_unit.untargetable:
 					if target not in _attack_cells:
 						_attack_cells.append(target)
 
@@ -969,6 +1173,8 @@ func _unhandled_input(event: InputEvent) -> void:
 func _process(_delta: float) -> void:
 	_update_grass_wind()
 	_update_tutorial_focus_ring()
+	_update_move_outline_visual()
+	_update_summon_outline_visual()
 
 func _screen_to_cell(screen_pos: Vector2) -> Vector2i:
 	var cam: Camera3D = camera_override if camera_override != null else get_viewport().get_camera_3d()
@@ -976,16 +1182,18 @@ func _screen_to_cell(screen_pos: Vector2) -> Vector2i:
 		return Vector2i(-1, -1)
 	var origin: Vector3 = cam.project_ray_origin(screen_pos)
 	var direction: Vector3 = cam.project_ray_normal(screen_pos)
-	if absf(direction.y) < 0.001:
+	var query: PhysicsRayQueryParameters3D = PhysicsRayQueryParameters3D.create(origin, origin + direction * 256.0)
+	query.collide_with_areas = false
+	query.collide_with_bodies = true
+	var result: Dictionary = get_world_3d().direct_space_state.intersect_ray(query)
+	if result.is_empty():
 		return Vector2i(-1, -1)
-	var t: float = -origin.y / direction.y
-	if t < 0.0:
-		return Vector2i(-1, -1)
-	var hit: Vector3 = origin + direction * t
-	var cell: Vector2i = world_to_hex(hit)
-	if cell.x < 0 or cell.x >= COLS or cell.y < 0 or cell.y >= ROWS:
-		return Vector2i(-1, -1)
-	return cell
+	var collider: Object = result.get("collider", null)
+	if collider is Node:
+		var node: Node = collider as Node
+		if node.has_meta("hex_cell"):
+			return node.get_meta("hex_cell", Vector2i(-1, -1))
+	return Vector2i(-1, -1)
 
 func _handle_hover(screen_pos: Vector2) -> void:
 	var cell: Vector2i = _screen_to_cell(screen_pos)
@@ -1022,11 +1230,17 @@ func _handle_click(screen_pos: Vector2) -> void:
 	if cell == Vector2i(-1, -1):
 		return
 	if _card_target_mode:
-		var target_unit: Unit = _units.get(cell, null)
-		if target_unit != null and cell in _card_target_cells:
-			var chosen_index: int = _card_target_index
-			_exit_card_target_mode()
-			emit_signal("card_target_selected", chosen_index, target_unit)
+		if _card_target_towers:
+			if cell in _card_target_cells:
+				var chosen_index: int = _card_target_index
+				_exit_card_target_mode()
+				emit_signal("card_tower_selected", chosen_index, cell)
+		else:
+			var target_unit: Unit = _units.get(cell, null)
+			if target_unit != null and cell in _card_target_cells:
+				var chosen_index: int = _card_target_index
+				_exit_card_target_mode()
+				emit_signal("card_target_selected", chosen_index, target_unit)
 		return
 
 	# ── Master placement mode ──────────────────────────────────────────────────
@@ -1131,6 +1345,9 @@ func _move_unit(from: Vector2i, to: Vector2i) -> void:
 	_units[to] = unit
 	unit.set_hex_cell(to)
 	unit.use_move(_get_terrain_cost(to.x, to.y))
+	unit.moves_this_turn += _hex_distance(from, to)
+	if to != from:
+		unit.facing = to - from
 
 	# Animate renderer
 	if _unit_renderers.has(from):
@@ -1161,14 +1378,28 @@ func _move_unit(from: Vector2i, to: Vector2i) -> void:
 	# Tower capture
 	var tower: Tower = _towers.get(to, null)
 	if tower != null and tower.owner_id != unit.owner_id:
+		var previous_owner_id: int = tower.owner_id
 		var capture_bonus: int = tower.capture(unit.owner_id)
 		if resource_manager != null and capture_bonus > 0:
 			resource_manager.add_essence(unit.owner_id, capture_bonus)
+		var tower_exp_reward: int = (ENEMY_TOWER_CAPTURE_EXP_REWARD if previous_owner_id > 0 else 0) + (2 if unit.bonus_raider else 0)
+		var exp_result: Dictionary = unit.gain_exp_with_result(tower_exp_reward)
+		var renderer_after_capture: Node3D = _unit_renderers.get(to, null)
+		if renderer_after_capture != null and renderer_after_capture.has_method("set_health_bar_values"):
+			renderer_after_capture.call("set_health_bar_values", unit.hp, unit.max_hp, true)
 		_update_tower_visual(to)
 		emit_signal("tower_captured", tower.tower_name, unit.owner_id)
 		AudioManager.play_capture()
 		if capture_bonus > 0:
 			AudioManager.play_essence()
+		if int(exp_result.get("gained", 0)) > 0:
+			VFXManager.show_world_text_label(
+				_get_unit_world_anchor(to),
+				"+%d XP" % int(exp_result.get("gained", 0)),
+				Color(0.84, 0.42, 1.0, 1.0),
+				48,
+				1.85
+			)
 		print("[HexGrid3D] J%d capturó una torre en (%d,%d)" % [unit.owner_id, to.x, to.y])
 
 	print("[HexGrid3D] %s movido a (%d,%d) | movimientos restantes: %d" % [
@@ -1228,6 +1459,7 @@ func _initiate_combat(attacker_cell: Vector2i, defender_cell: Vector2i) -> void:
 		"defender_renderer": def_renderer,
 		"all_renderers":     _unit_renderers.values(),
 		"host":              self,
+		"is_night":          _is_night_visuals,
 	}
 
 	# ── Run cinematic + combat (CombatManager owns the full sequence) ──────────
@@ -1305,16 +1537,36 @@ func _exit_card_target_mode() -> void:
 	if not _card_target_mode and _card_target_cells.is_empty():
 		return
 	for cell: Vector2i in _card_target_cells:
-		var renderer: Node3D = _unit_renderers.get(cell)
-		if renderer != null and renderer.has_method("set_card_target_highlight"):
-			renderer.call("set_card_target_highlight", false, Color.WHITE)
+		if _card_target_towers:
+			_set_tower_target_glow(cell, false)
+		else:
+			var renderer: Node3D = _unit_renderers.get(cell)
+			if renderer != null and renderer.has_method("set_card_target_highlight"):
+				renderer.call("set_card_target_highlight", false, Color.WHITE)
 	_card_target_mode = false
 	_card_target_player = 0
 	_card_target_index = -1
 	_card_target_type = ""
+	_card_target_towers = false
 	_card_target_cells.clear()
 	clear_highlights()
 	_set_selection_focus(false)
+
+func _set_tower_target_glow(cell: Vector2i, active: bool) -> void:
+	var tower_root: Node3D = _tower_instances.get(cell, null)
+	if tower_root == null:
+		return
+	var mats: Array = tower_root.get_meta("tower_materials", [])
+	for mat_value: Variant in mats:
+		var mat: ShaderMaterial = mat_value as ShaderMaterial
+		if mat == null:
+			continue
+		if active:
+			mat.set_shader_parameter("emission_color", Color(1.0, 0.82, 0.18, 1.0))
+			mat.set_shader_parameter("emission_strength", 1.4)
+		else:
+			mat.set_shader_parameter("emission_color", Color.BLACK)
+			mat.set_shader_parameter("emission_strength", 0.0)
 
 # ─── Grid construction ────────────────────────────────────────────────────────────
 func _build_meshes() -> void:
@@ -1327,6 +1579,7 @@ func _build_meshes() -> void:
 		cyl.radial_segments = 6
 		cyl.rings           = 1
 		_terrain_meshes[t]  = cyl
+		_terrain_collision_shapes[t] = _make_hex_collision_shape(h, HEX_SIZE * HEX_VISUAL_RADIUS_FACTOR)
 
 func _build_grid() -> void:
 	for col: int in range(COLS):
@@ -1337,12 +1590,13 @@ func _build_grid() -> void:
 
 			var mat: ShaderMaterial = ShaderMaterial.new()
 			mat.shader = TerrainShader
-			mat.set_shader_parameter("albedo_color",    TERRAIN_COLORS.get(terrain, Color.WHITE))
-			mat.set_shader_parameter("use_albedo_texture", terrain == Terrain.GRASS)
-			mat.set_shader_parameter("albedo_texture", _get_grass_tile_texture(col, row) if terrain == Terrain.GRASS else null)
-			mat.set_shader_parameter("texture_tint_strength", 1.0)
-			mat.set_shader_parameter("texture_brightness", 1.55 if terrain == Terrain.GRASS else 1.0)
-			mat.set_shader_parameter("deco_strength", 0.22)
+			mat.set_shader_parameter("albedo_color",    _get_terrain_albedo_color(terrain))
+			mat.set_shader_parameter("use_albedo_texture", terrain == Terrain.GRASS or terrain == Terrain.FOREST)
+			mat.set_shader_parameter("albedo_texture", _get_terrain_tile_texture(terrain, col, row))
+			mat.set_shader_parameter("texture_tint_strength", 0.82 if terrain == Terrain.FOREST else 1.0)
+			mat.set_shader_parameter("texture_brightness", 1.55 if terrain == Terrain.GRASS else (1.48 if terrain == Terrain.FOREST else 1.0))
+			mat.set_shader_parameter("deco_strength", 0.24 if terrain == Terrain.FOREST else 0.20)
+			mat.set_shader_parameter("deco_profile", 1 if terrain == Terrain.FOREST else 0)
 			mat.set_shader_parameter("pixel_density", 22.0)
 			mat.set_shader_parameter("patch_pixel_size", 6.0)
 			mat.set_shader_parameter("light_bands", 3.0)
@@ -1350,6 +1604,7 @@ func _build_grid() -> void:
 			mat.set_shader_parameter("emission_strength", 0.0)
 			mat.set_shader_parameter("dim_factor", 1.0)
 			mat.set_shader_parameter("night_glow_strength", 0.0)
+			_apply_cloud_shadow_params(mat, false)
 			mat.next_pass = _get_terrain_outline_mat()
 
 			var inst: MeshInstance3D = MeshInstance3D.new()
@@ -1363,6 +1618,30 @@ func _build_grid() -> void:
 			var key: Vector2i = Vector2i(col, row)
 			_tile_instances[key] = inst
 			_tile_materials[key] = mat
+
+			var body: StaticBody3D = StaticBody3D.new()
+			body.name = "TileBody_%d_%d" % [col, row]
+			body.position = Vector3(world_pos.x, h * 0.5, world_pos.z)
+			body.set_meta("hex_cell", key)
+			var collision: CollisionShape3D = CollisionShape3D.new()
+			collision.shape = _terrain_collision_shapes.get(terrain, null)
+			body.add_child(collision)
+			add_child(body)
+
+
+func _make_hex_collision_shape(tile_height: float, radius: float) -> ConvexPolygonShape3D:
+	var shape: ConvexPolygonShape3D = ConvexPolygonShape3D.new()
+	var points: PackedVector3Array = PackedVector3Array()
+	var half_height: float = tile_height * 0.5
+	var angle_offset: float = deg_to_rad(30.0)
+	for side_index: int in range(HexCell3DScript.SIDE_COUNT):
+		var angle: float = angle_offset + deg_to_rad(60.0 * float(side_index))
+		var x: float = cos(angle) * radius
+		var z: float = sin(angle) * radius
+		points.append(Vector3(x, half_height, z))
+		points.append(Vector3(x, -half_height, z))
+	shape.points = points
+	return shape
 
 
 func _ensure_combat_wall_system() -> void:
@@ -1429,9 +1708,9 @@ func _build_grass_billboards() -> void:
 	for col: int in range(COLS):
 		for row: int in range(ROWS):
 			var terrain: int = _map_terrain[row][col]
-			if terrain != Terrain.GRASS:
+			if terrain != Terrain.GRASS and terrain != Terrain.FOREST:
 				continue
-			var cluster_count: int = _get_grass_cluster_count(col, row)
+			var cluster_count: int = _get_grass_cluster_count(col, row, terrain)
 			if cluster_count <= 0:
 				continue
 			var base_pos: Vector3 = hex_to_world(col, row)
@@ -1444,22 +1723,22 @@ func _build_grass_billboards() -> void:
 				_grass_cluster_roots.append(cluster_root)
 				_grass_cluster_base_positions.append(cluster_root.position)
 				_grass_cluster_phases.append(float(abs((col * 83) + (row * 47) + (i * 29) + GameData.map_seed)) * 0.09)
-				_grass_cluster_strengths.append(lerp(0.030, 0.060, (_get_grass_offset(col, row, i, 11) + 1.0) * 0.5))
+				_grass_cluster_strengths.append(lerp(0.020, 0.042, (_get_grass_offset(col, row, i, 11) + 1.0) * 0.5) if terrain == Terrain.FOREST else lerp(0.030, 0.060, (_get_grass_offset(col, row, i, 11) + 1.0) * 0.5))
 
-				var blade_count: int = 2 + int(abs((col * 17) + (row * 31) + i + GameData.map_seed) % 2)
+				var blade_count: int = (1 + int(abs((col * 17) + (row * 31) + i + GameData.map_seed) % 2)) if terrain == Terrain.FOREST else (2 + int(abs((col * 17) + (row * 31) + i + GameData.map_seed) % 2))
 				for blade_index: int in range(blade_count):
 					var blade := Sprite3D.new()
 					blade.texture = _grass_blade_texture
 					blade.centered = false
 					blade.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
-					blade.pixel_size = 0.021 + (0.0030 * blade_index)
+					blade.pixel_size = (0.018 + (0.0020 * blade_index)) if terrain == Terrain.FOREST else (0.021 + (0.0030 * blade_index))
 					blade.shaded = true
 					blade.no_depth_test = false
 					blade.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 					blade.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
 					blade.alpha_scissor_threshold = 0.12
 					blade.offset = Vector2(0.0, -15.0)
-					blade.modulate = _get_grass_blade_color(col, row, i * 3 + blade_index)
+					blade.modulate = _get_grass_blade_color(col, row, i * 3 + blade_index, terrain)
 					blade.position = Vector3(
 						_get_grass_offset(col, row, i * 3 + blade_index, 3) * 0.075,
 						0.0,
@@ -1468,15 +1747,34 @@ func _build_grass_billboards() -> void:
 					blade.rotation_degrees.y = float(((col + row + i + blade_index) % 6) * 60)
 					cluster_root.add_child(blade)
 
-func _get_grass_tile_texture(col: int, row: int) -> Texture2D:
-	if GRASS_TILE_TEXTURES.is_empty():
+func _get_terrain_tile_texture(terrain: int, col: int, row: int) -> Texture2D:
+	var textures: Array[Texture2D] = []
+	match terrain:
+		Terrain.GRASS:
+			textures = GRASS_TILE_TEXTURES
+		Terrain.FOREST:
+			textures = FOREST_TILE_TEXTURES
+		_:
+			return null
+	if textures.is_empty():
 		return null
-	var index: int = abs((col * 92821) + (row * 68917) + GameData.map_seed) % GRASS_TILE_TEXTURES.size()
-	return GRASS_TILE_TEXTURES[index]
+	var index: int = abs((col * 92821) + (row * 68917) + GameData.map_seed) % textures.size()
+	return textures[index]
 
-func _get_grass_cluster_count(col: int, row: int) -> int:
+func _get_terrain_albedo_color(terrain: int) -> Color:
+	if terrain == Terrain.FOREST:
+		return Color(0.30, 0.64, 0.28, 1.0)
+	return TERRAIN_COLORS.get(terrain, Color.WHITE)
+
+func _get_grass_cluster_count(col: int, row: int, terrain: int = Terrain.GRASS) -> int:
 	var hash_value: int = abs((col * 19349663) ^ (row * 83492791) ^ (GameData.map_seed * 29791))
 	var roll: int = hash_value % 100
+	if terrain == Terrain.FOREST:
+		if roll < 40:
+			return 0
+		if roll < 82:
+			return 1
+		return 2
 	if roll < 28:
 		return 0
 	if roll < 70:
@@ -1496,8 +1794,15 @@ func _get_grass_offset(col: int, row: int, index: int, axis: int) -> float:
 	var hash_value: int = abs((col * 73856093) + (row * 19349663) + (index * 83492791) + seed_base)
 	return (float(hash_value % 1000) / 999.0) * 2.0 - 1.0
 
-func _get_grass_blade_color(col: int, row: int, index: int) -> Color:
+func _get_grass_blade_color(col: int, row: int, index: int, terrain: int = Terrain.GRASS) -> Color:
 	var shift: float = (_get_grass_offset(col, row, index, 2) + 1.0) * 0.5
+	if terrain == Terrain.FOREST:
+		return Color(
+			lerp(0.16, 0.28, shift),
+			lerp(0.42, 0.62, shift),
+			lerp(0.12, 0.20, shift),
+			0.88
+		)
 	return Color(
 		lerp(0.22, 0.42, shift),
 		lerp(0.72, 1.00, shift),
@@ -1624,6 +1929,59 @@ func _spawn_tower_3d(cell: Vector2i, tower: Tower) -> void:
 	_add_tower_piece(tower_root, Vector3(0.045, 0.13, 0.018), Vector3(0.0, 0.48, -0.100), tower_materials[2])
 	_add_tower_piece(tower_root, Vector3(0.07, 0.012, 0.02), Vector3(0.0, 0.40, -0.094), tower_materials[1])
 
+	var special_root := Node3D.new()
+	special_root.name = "SpecialEffectRoot"
+	special_root.visible = false
+	tower_root.add_child(special_root)
+	tower_root.set_meta("special_root", special_root)
+
+	var special_ring := MeshInstance3D.new()
+	var special_ring_mesh := TorusMesh.new()
+	special_ring_mesh.outer_radius = 0.26
+	special_ring_mesh.inner_radius = 0.028
+	special_ring_mesh.rings = 6
+	special_ring_mesh.ring_segments = 20
+	special_ring.mesh = special_ring_mesh
+	var special_ring_mat := StandardMaterial3D.new()
+	special_ring_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	special_ring_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	special_ring_mat.albedo_color = Color(0.54, 0.98, 0.78, 0.92)
+	special_ring_mat.emission_enabled = true
+	special_ring_mat.emission = Color(0.54, 0.98, 0.78, 1.0)
+	special_ring_mat.emission_energy_multiplier = 1.35
+	special_ring.material_override = special_ring_mat
+	special_ring.rotation_degrees = Vector3(90.0, 0.0, 0.0)
+	special_ring.position = Vector3(0.0, 1.06, 0.0)
+	special_root.add_child(special_ring)
+	tower_root.set_meta("special_ring_material", special_ring_mat)
+
+	var special_gem := MeshInstance3D.new()
+	var special_gem_mesh := BoxMesh.new()
+	special_gem_mesh.size = Vector3(0.10, 0.18, 0.10)
+	special_gem.mesh = special_gem_mesh
+	var special_gem_mat := StandardMaterial3D.new()
+	special_gem_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	special_gem_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	special_gem_mat.albedo_color = Color(0.74, 1.0, 0.86, 0.95)
+	special_gem_mat.emission_enabled = true
+	special_gem_mat.emission = Color(0.66, 1.0, 0.84, 1.0)
+	special_gem_mat.emission_energy_multiplier = 1.55
+	special_gem.material_override = special_gem_mat
+	special_gem.position = Vector3(0.0, 1.14, 0.0)
+	special_root.add_child(special_gem)
+	tower_root.set_meta("special_gem_material", special_gem_mat)
+
+	var special_label := Label3D.new()
+	special_label.text = "SAGRADA"
+	special_label.pixel_size = 0.0065
+	special_label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	special_label.modulate = Color(0.70, 1.0, 0.82, 0.95)
+	special_label.outline_modulate = Color(0.10, 0.18, 0.14, 0.95)
+	special_label.position = Vector3(0.0, 1.42, 0.0)
+	GameData.apply_selected_font_to_label3d(special_label)
+	special_root.add_child(special_label)
+	tower_root.set_meta("special_label", special_label)
+
 	_tower_instances[cell] = tower_root
 
 	# Income label
@@ -1664,6 +2022,29 @@ func _update_tower_visual(cell: Vector2i) -> void:
 		var mat: ShaderMaterial = material_value as ShaderMaterial
 		if mat != null:
 			_configure_tower_material(mat, tower.owner_id)
+	var special_root: Node3D = tower_root.get_meta("special_root", null) as Node3D
+	var special_label: Label3D = tower_root.get_meta("special_label", null) as Label3D
+	var ring_mat: StandardMaterial3D = tower_root.get_meta("special_ring_material", null) as StandardMaterial3D
+	var gem_mat: StandardMaterial3D = tower_root.get_meta("special_gem_material", null) as StandardMaterial3D
+	if special_root != null:
+		var is_special: bool = tower.has_special_effect()
+		special_root.visible = is_special
+		if is_special:
+			var accent_color: Color = GameData.get_player_color(tower.special_effect_owner_id) if tower.special_effect_owner_id > 0 else Color(0.70, 1.0, 0.82, 1.0)
+			var sacred_color: Color = accent_color.lerp(Color(0.70, 1.0, 0.82, 1.0), 0.55)
+			if ring_mat != null:
+				ring_mat.albedo_color = Color(sacred_color.r, sacred_color.g, sacred_color.b, 0.90)
+				ring_mat.emission = sacred_color
+			if gem_mat != null:
+				gem_mat.albedo_color = Color(sacred_color.r, minf(1.0, sacred_color.g + 0.08), minf(1.0, sacred_color.b + 0.04), 0.95)
+				gem_mat.emission = sacred_color.lightened(0.12)
+			if special_label != null:
+				match tower.special_effect_type:
+					"tower_heal":
+						special_label.text = "SAGRADA +%d" % tower.special_effect_value
+					_:
+						special_label.text = tower.special_effect_type.to_upper()
+				special_label.modulate = Color(sacred_color.r, sacred_color.g, sacred_color.b, 0.95)
 
 func play_tower_income_feedback(player_id: int) -> void:
 	for cell_value: Variant in _towers.keys():
@@ -1721,8 +2102,8 @@ func set_combat_tower_obstruction_fade(active: bool, focus_mid: Vector3 = Vector
 		var toward_focus: float = (focus_mid - camera_pos).length()
 		var toward_tower: float = (tower_pos - camera_pos).length()
 		var opacity: float = 1.0
-		if segment_distance < 0.38 and toward_tower < toward_focus - 0.1:
-			opacity = 0.18
+		if segment_distance < 0.44 and toward_tower < toward_focus - 0.08:
+			opacity = 0.08
 		_set_tower_root_opacity(tower_root, opacity)
 
 	for renderer_value: Variant in _unit_renderers.values():
@@ -1734,8 +2115,8 @@ func set_combat_tower_obstruction_fade(active: bool, focus_mid: Vector3 = Vector
 		var toward_focus: float = (focus_mid - camera_pos).length()
 		var toward_unit: float = (unit_pos - camera_pos).length()
 		var opacity: float = 1.0
-		if segment_distance < 0.34 and toward_unit < toward_focus - 0.06:
-			opacity = 0.20
+		if segment_distance < 0.40 and toward_unit < toward_focus - 0.04:
+			opacity = 0.10
 		renderer.call("set_combat_obstruction_opacity", opacity)
 
 func set_combat_team_rings_visible(visible: bool) -> void:
@@ -1749,6 +2130,36 @@ func set_combat_unit_badges_visible(visible: bool) -> void:
 		var renderer: Node3D = renderer_value as Node3D
 		if renderer != null and renderer.has_method("set_class_badge_visible"):
 			renderer.call("set_class_badge_visible", visible)
+
+func pulse_board_units_for_master_crit(attacker_cell: Vector2i, defender_cell: Vector2i, lift_height: float = 0.18, duration: float = 0.26) -> void:
+	for cell_value: Variant in _unit_renderers.keys():
+		var cell: Vector2i = cell_value as Vector2i
+		if cell == attacker_cell or cell == defender_cell:
+			continue
+		var renderer: Node3D = _unit_renderers.get(cell) as Node3D
+		if renderer == null or not is_instance_valid(renderer):
+			continue
+		var base_pos: Vector3 = renderer.position
+		var tw := create_tween()
+		tw.tween_property(renderer, "position:y", base_pos.y + lift_height, duration * 0.42) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		tw.tween_property(renderer, "position:y", base_pos.y, duration * 0.58) \
+			.set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+
+func pulse_board_units_for_super_crit(attacker_cell: Vector2i, defender_cell: Vector2i, lift_height: float = 0.28, duration: float = 0.42) -> void:
+	for cell_value: Variant in _unit_renderers.keys():
+		var cell: Vector2i = cell_value as Vector2i
+		if cell == attacker_cell or cell == defender_cell:
+			continue
+		var renderer: Node3D = _unit_renderers.get(cell) as Node3D
+		if renderer == null or not is_instance_valid(renderer):
+			continue
+		var base_pos: Vector3 = renderer.position
+		var tw := create_tween()
+		tw.tween_property(renderer, "position:y", base_pos.y + lift_height, duration * 0.34) \
+			.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		tw.tween_property(renderer, "position:y", base_pos.y, duration * 0.66) \
+			.set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
 
 func show_combat_stage(attacker_cell: Vector2i, defender_cell: Vector2i, _camera_pos: Vector3 = Vector3.ZERO) -> void:
 	var parent_node: Node = get_parent()
@@ -1776,7 +2187,7 @@ func set_combat_board_theater(active: bool, focus_cells: Array = []) -> void:
 			focus_lookup[cell_value] = true
 
 	var default_dim: float = TILE_DIM_FACTOR_FOCUSED if _selection_focus_active else 1.0
-	var board_dim: float = 0.52 if active else default_dim
+	var board_dim: float = 0.34 if active else default_dim
 	for cell_value: Variant in _tile_materials.keys():
 		var cell: Vector2i = cell_value as Vector2i
 		var mat: ShaderMaterial = _tile_materials.get(cell, null) as ShaderMaterial
@@ -1790,17 +2201,17 @@ func set_combat_board_theater(active: bool, focus_cells: Array = []) -> void:
 				var focus_cell: Vector2i = focus_value as Vector2i
 				var dist: int = _hex_distance(cell, focus_cell)
 				if dist <= 1:
-					tile_dim = maxf(tile_dim, 0.86)
+					tile_dim = maxf(tile_dim, 0.74)
 					break
 				elif dist <= 2:
-					tile_dim = maxf(tile_dim, 0.68)
+					tile_dim = maxf(tile_dim, 0.54)
 		mat.set_shader_parameter("dim_factor", tile_dim)
 
 	for tower_root_value: Variant in _tower_instances.values():
 		var tower_root: Node3D = tower_root_value as Node3D
 		if tower_root == null:
 			continue
-		_set_tower_root_opacity(tower_root, 0.58 if active else 1.0)
+		_set_tower_root_opacity(tower_root, 0.20 if active else 1.0)
 
 	if _grass_deco_container != null:
 		_grass_deco_container.visible = true
@@ -1860,6 +2271,8 @@ func _add_combat_stage_wall_segment(root: Node3D, start: Vector3, finish: Vector
 	root.add_child(wall)
 
 func _configure_tile_material(mat: ShaderMaterial, terrain: int) -> void:
+	_apply_cloud_shadow_params(mat, false)
+	_apply_terrain_style_params(mat, terrain)
 	if _is_night_visuals:
 		mat.set_shader_parameter("shadow_threshold", 0.40)
 		mat.set_shader_parameter("highlight_threshold", 0.84)
@@ -1882,6 +2295,34 @@ func _configure_tile_material(mat: ShaderMaterial, terrain: int) -> void:
 	mat.set_shader_parameter("night_glow_color", Color(0.20, 0.32, 0.55, 1.0))
 	mat.set_shader_parameter("night_glow_strength", 0.0)
 
+func _apply_terrain_style_params(mat: ShaderMaterial, terrain: int) -> void:
+	mat.set_shader_parameter("terrain_shadow_response", 1.0)
+	mat.set_shader_parameter("terrain_sunbreak_response", 1.0)
+	mat.set_shader_parameter("terrain_ambient_lift", 1.0)
+	mat.set_shader_parameter("water_shimmer_strength", 0.0)
+	mat.set_shader_parameter("water_shimmer_speed", 0.0)
+	mat.set_shader_parameter("water_shimmer_tint", Vector3(0.88, 0.96, 1.10))
+	match terrain:
+		Terrain.WATER:
+			mat.set_shader_parameter("terrain_shadow_response", 0.68)
+			mat.set_shader_parameter("terrain_sunbreak_response", 1.35)
+			mat.set_shader_parameter("terrain_ambient_lift", 1.06)
+			mat.set_shader_parameter("water_shimmer_strength", 0.22 if not _is_night_visuals else 0.12)
+			mat.set_shader_parameter("water_shimmer_speed", 0.085 if not _is_night_visuals else 0.040)
+			mat.set_shader_parameter("water_shimmer_tint", Vector3(0.92, 1.00, 1.14))
+		Terrain.MOUNTAIN, Terrain.CORDILLERA:
+			mat.set_shader_parameter("terrain_shadow_response", 1.24)
+			mat.set_shader_parameter("terrain_sunbreak_response", 0.72)
+			mat.set_shader_parameter("terrain_ambient_lift", 0.94)
+		Terrain.FOREST:
+			mat.set_shader_parameter("terrain_shadow_response", 0.66 if _is_night_visuals else 0.74)
+			mat.set_shader_parameter("terrain_sunbreak_response", 0.74)
+			mat.set_shader_parameter("terrain_ambient_lift", 1.20 if _is_night_visuals else 1.10)
+		Terrain.DESERT:
+			mat.set_shader_parameter("terrain_shadow_response", 0.82)
+			mat.set_shader_parameter("terrain_sunbreak_response", 1.22)
+			mat.set_shader_parameter("terrain_ambient_lift", 1.04)
+
 func _create_tower_material(base_color: Color, owner_id: int, owner_mix: float, emission_strength: float) -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
 	mat.shader = TowerShader
@@ -1903,7 +2344,8 @@ func _add_tower_piece(root: Node3D, size: Vector3, local_pos: Vector3, mat: Shad
 	root.add_child(piece)
 
 func _configure_tower_material(mat: ShaderMaterial, owner_id: int) -> void:
-	var owner_color: Color = OWNER_COLORS.get(owner_id, OWNER_COLORS[0])
+	_apply_cloud_shadow_params(mat, true)
+	var owner_color: Color = GameData.get_player_color(owner_id) if owner_id > 0 else OWNER_COLORS[0]
 	var base_color: Color = mat.get_meta("base_color", Color(0.70, 0.70, 0.72, 1.0)) as Color
 	var owner_mix: float = float(mat.get_meta("owner_mix", 0.10))
 	var emission_strength: float = float(mat.get_meta("day_emission_strength", 0.22))
@@ -1934,6 +2376,31 @@ func _configure_tower_material(mat: ShaderMaterial, owner_id: int) -> void:
 	mat.set_shader_parameter("highlight_tint", Vector3(1.12, 1.12, 1.16))
 	mat.set_shader_parameter("night_glow_color", Color(0.24, 0.36, 0.62, 1.0))
 	mat.set_shader_parameter("night_glow_strength", 0.0)
+
+func _cloud_shadow_size_weight() -> float:
+	var map_span: float = float(mini(COLS, ROWS))
+	return 1.0 - clampf(inverse_lerp(8.0, 16.0, map_span), 0.0, 1.0)
+
+func _apply_cloud_shadow_params(mat: ShaderMaterial, is_tower: bool) -> void:
+	if mat == null:
+		return
+	var small_map_weight: float = _cloud_shadow_size_weight()
+	var scale_value: float = lerpf(CLOUD_SHADOW_SCALE_LARGE, CLOUD_SHADOW_SCALE_SMALL, small_map_weight)
+	var speed_value: float = lerpf(CLOUD_SHADOW_SPEED_LARGE, CLOUD_SHADOW_SPEED_SMALL, small_map_weight)
+	var pixel_size_value: float = lerpf(CLOUD_PIXEL_SIZE_LARGE, CLOUD_PIXEL_SIZE_SMALL, small_map_weight)
+	var strength_large: float = CLOUD_SHADOW_STRENGTH_LARGE * (0.70 if is_tower else 1.0)
+	var strength_small: float = CLOUD_SHADOW_STRENGTH_SMALL * (0.74 if is_tower else 1.0)
+	var strength_value: float = lerpf(strength_large, strength_small, small_map_weight)
+	var sunbreak_large: float = CLOUD_SUNBREAK_STRENGTH_LARGE * (0.75 if is_tower else 1.0)
+	var sunbreak_small: float = CLOUD_SUNBREAK_STRENGTH_SMALL * (0.78 if is_tower else 1.0)
+	var sunbreak_value: float = lerpf(sunbreak_large, sunbreak_small, small_map_weight)
+	mat.set_shader_parameter("cloud_shadow_scale", scale_value)
+	mat.set_shader_parameter("cloud_shadow_speed", speed_value)
+	mat.set_shader_parameter("cloud_shadow_strength", strength_value)
+	mat.set_shader_parameter("cloud_shadow_softness", CLOUD_SHADOW_SOFTNESS)
+	mat.set_shader_parameter("cloud_pixel_size", pixel_size_value)
+	mat.set_shader_parameter("cloud_sunbreak_strength", sunbreak_value)
+	mat.set_shader_parameter("cloud_sunbreak_tint", CLOUD_SUNBREAK_TINT)
 
 func _animate_tower_income_feedback(tower_root: Node3D, tower: Tower) -> void:
 	var materials: Array = tower_root.get_meta("tower_materials", [])
@@ -2016,11 +2483,17 @@ func _set_tower_root_opacity(tower_root: Node3D, opacity: float) -> void:
 		if mesh_instance == null:
 			continue
 		_set_mesh_obstruction_material(mesh_instance, obstructed, opacity)
+	var income_icon: Sprite3D = tower_root.get_meta("income_icon") as Sprite3D if tower_root.has_meta("income_icon") else null
+	if income_icon != null:
+		income_icon.visible = opacity >= 0.999
+	var income_label: Label3D = tower_root.get_meta("income_label") as Label3D if tower_root.has_meta("income_label") else null
+	if income_label != null:
+		income_label.visible = opacity >= 0.999
 
 
 func _set_mesh_obstruction_material(mesh_instance: MeshInstance3D, obstructed: bool, opacity: float) -> void:
 	if not obstructed:
-		var original_material: Material = mesh_instance.get_meta("combat_original_material", null) as Material
+		var original_material: Material = mesh_instance.get_meta("combat_original_material") as Material if mesh_instance.has_meta("combat_original_material") else null
 		if original_material != null:
 			mesh_instance.material_override = original_material
 		return
@@ -2028,7 +2501,7 @@ func _set_mesh_obstruction_material(mesh_instance: MeshInstance3D, obstructed: b
 	if not mesh_instance.has_meta("combat_original_material"):
 		mesh_instance.set_meta("combat_original_material", mesh_instance.material_override)
 
-	var obstruction_material: ShaderMaterial = mesh_instance.get_meta("combat_obstruction_material", null) as ShaderMaterial
+	var obstruction_material: ShaderMaterial = mesh_instance.get_meta("combat_obstruction_material") as ShaderMaterial if mesh_instance.has_meta("combat_obstruction_material") else null
 	if obstruction_material == null:
 		obstruction_material = _create_combat_obstruction_material(mesh_instance)
 		mesh_instance.set_meta("combat_obstruction_material", obstruction_material)
@@ -2102,7 +2575,7 @@ func _terrain_night_glow_strength(terrain: int) -> float:
 		Terrain.MOUNTAIN:
 			base_strength = 0.03
 		Terrain.FOREST:
-			base_strength = 0.015
+			base_strength = 0.030
 		Terrain.DESERT:
 			base_strength = 0.025
 		Terrain.VOLCANO:
@@ -2119,7 +2592,7 @@ func _place_masters() -> void:
 	for player_id: int in GameData.get_player_ids():
 		var player_cell: Vector2i = GameData.get_master_cell_for_player(player_id)
 		var master: Master = MasterScript.new()
-		master.init_master(player_id)
+		master.init_master(player_id, GameData.get_faction_for_player(player_id))
 		place_unit(master, player_cell.x, player_cell.y)
 		placed_info.append("J%d en %s" % [player_id, str(player_cell)])
 
@@ -2127,30 +2600,32 @@ func _place_masters() -> void:
 
 # ─── Shader helpers ───────────────────────────────────────────────────────────────
 ## Shared terrain outline material (1 px side outline, cached for all 384 hex tiles).
-func _get_terrain_outline_mat() -> ShaderMaterial:
+func _get_terrain_outline_mat() -> StandardMaterial3D:
 	if _terrain_outline_mat != null:
 		return _terrain_outline_mat
-	var shader: Shader = Shader.new()
-	shader.code = _OUTLINE_CODE
-	_terrain_outline_mat = ShaderMaterial.new()
-	_terrain_outline_mat.shader = shader
-	_terrain_outline_mat.set_shader_parameter("outline_width", 0.018)
+	_terrain_outline_mat = StandardMaterial3D.new()
+	_terrain_outline_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_terrain_outline_mat.albedo_color = Color.BLACK
+	_terrain_outline_mat.cull_mode = BaseMaterial3D.CULL_FRONT
+	_terrain_outline_mat.grow = true
+	_terrain_outline_mat.grow_amount = 0.018
 	return _terrain_outline_mat
 
 ## Shared tower outline material (2 px side outline, cached for all tower meshes).
-func _get_tower_outline_mat() -> ShaderMaterial:
+func _get_tower_outline_mat() -> StandardMaterial3D:
 	if _tower_outline_mat != null:
 		return _tower_outline_mat
-	var shader: Shader = Shader.new()
-	shader.code = _OUTLINE_CODE
-	_tower_outline_mat = ShaderMaterial.new()
-	_tower_outline_mat.shader = shader
-	_tower_outline_mat.set_shader_parameter("outline_width", 0.034)
+	_tower_outline_mat = StandardMaterial3D.new()
+	_tower_outline_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_tower_outline_mat.albedo_color = Color.BLACK
+	_tower_outline_mat.cull_mode = BaseMaterial3D.CULL_FRONT
+	_tower_outline_mat.grow = true
+	_tower_outline_mat.grow_amount = 0.034
 	return _tower_outline_mat
 
 # ─── Team ring helpers ────────────────────────────────────────────────────────────
 func _add_team_ring(cell: Vector2i, owner_id: int) -> void:
-	var color: Color = OWNER_COLORS.get(owner_id, Color.WHITE)
+	var color: Color = GameData.get_player_color(owner_id) if owner_id > 0 else Color.WHITE
 	var terrain: int = _map_terrain[cell.y][cell.x] as int
 	var base_y: float = TERRAIN_HEIGHTS.get(terrain, 0.12)
 	var world_pos: Vector3 = hex_to_world(cell.x, cell.y)
@@ -2182,7 +2657,7 @@ func _update_team_ring_state(cell: Vector2i, unit: Unit) -> void:
 	if not (ring.material_override is StandardMaterial3D):
 		return
 	var mat: StandardMaterial3D = ring.material_override as StandardMaterial3D
-	var base_color: Color = OWNER_COLORS.get(unit.owner_id, Color.WHITE)
+	var base_color: Color = GameData.get_player_color(unit.owner_id) if unit.owner_id > 0 else Color.WHITE
 	var spent: bool = bool(unit.moved) or bool(unit.has_attacked)
 	if spent:
 		mat.albedo_color = base_color.darkened(0.58)
@@ -2283,6 +2758,156 @@ func _update_tutorial_focus_ring() -> void:
 		if corner_piece != null:
 			corner_piece.global_transform = edge_marker.global_transform
 			corner_piece.position += edge_marker.global_transform.basis.x.normalized() * 0.22 + edge_marker.global_transform.basis.z.normalized() * 0.05
+
+func _ensure_move_outline_root() -> void:
+	if _move_outline_root != null:
+		return
+	_move_outline_material = StandardMaterial3D.new()
+	_move_outline_material.albedo_color = Color(1.0, 0.92, 0.16, 0.98)
+	_move_outline_material.emission_enabled = true
+	_move_outline_material.emission = Color(1.0, 0.88, 0.12, 1.0)
+	_move_outline_material.emission_energy_multiplier = 1.35
+	_move_outline_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_move_outline_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_move_outline_material.no_depth_test = true
+	_move_outline_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+
+	_move_outline_root = Node3D.new()
+	_move_outline_root.visible = false
+	add_child(_move_outline_root)
+
+func _clear_move_outline() -> void:
+	if _move_outline_root == null:
+		return
+	for child: Node in _move_outline_root.get_children():
+		child.queue_free()
+	_move_outline_root.visible = false
+
+func _refresh_move_outline() -> void:
+	_clear_move_outline()
+	if _move_cells.is_empty():
+		return
+	_ensure_move_outline_root()
+	if _move_outline_root == null:
+		return
+
+	var boundary_cells: Dictionary = {}
+	for cell: Vector2i in _move_cells:
+		boundary_cells[cell] = true
+	if _selected_cell != Vector2i(-1, -1):
+		boundary_cells[_selected_cell] = true
+
+	for cell: Vector2i in _move_cells:
+		var tile: Node3D = _tile_instances.get(cell) as Node3D
+		if tile == null:
+			continue
+		var terrain: int = _map_terrain[cell.y][cell.x] as int
+		var base_y: float = TERRAIN_HEIGHTS.get(terrain, 0.12)
+		for side_index: int in range(HexCell3DScript.SIDE_COUNT):
+			var edge_marker: Marker3D = tile.get_node_or_null("edge[%d]" % side_index) as Marker3D
+			if edge_marker == null:
+				continue
+			var outward: Vector3 = edge_marker.global_transform.basis.z.normalized()
+			var sample_pos: Vector3 = edge_marker.global_transform.origin + outward * (HEX_SIZE * 0.9)
+			var nb: Vector2i = world_to_hex(sample_pos)
+			if nb != cell and boundary_cells.has(nb):
+				continue
+			var side_length: float = float(edge_marker.get_meta("side_length", 0.82))
+			var segment_mesh := BoxMesh.new()
+			segment_mesh.size = Vector3(side_length + 0.08, 0.03, 0.045)
+			var segment := MeshInstance3D.new()
+			segment.mesh = segment_mesh
+			segment.material_override = _move_outline_material
+			segment.global_transform = edge_marker.global_transform
+			segment.position += outward * 0.08
+			segment.position.y = base_y + 0.055
+			_move_outline_root.add_child(segment)
+
+	_move_outline_root.visible = _move_outline_root.get_child_count() > 0
+
+func _update_move_outline_visual() -> void:
+	if _move_outline_root == null or _move_outline_material == null or not _move_outline_root.visible:
+		return
+	var t: float = Time.get_ticks_msec() * 0.001
+	var pulse_phase: float = 0.5 + 0.5 * sin(t * 3.6)
+	var pulse: float = 1.12 + 0.58 * pulse_phase
+	var alpha: float = 0.78 + 0.20 * pulse_phase
+	_move_outline_material.emission_energy_multiplier = pulse
+	_move_outline_material.albedo_color = Color(1.0, 0.92, 0.16, alpha)
+
+func _ensure_summon_outline_root() -> void:
+	if _summon_outline_root != null:
+		return
+	_summon_outline_material = StandardMaterial3D.new()
+	_summon_outline_material.albedo_color = Color(0.38, 0.88, 1.0, 0.96)
+	_summon_outline_material.emission_enabled = true
+	_summon_outline_material.emission = Color(0.36, 0.86, 1.0, 1.0)
+	_summon_outline_material.emission_energy_multiplier = 1.25
+	_summon_outline_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_summon_outline_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_summon_outline_material.no_depth_test = true
+	_summon_outline_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+
+	_summon_outline_root = Node3D.new()
+	_summon_outline_root.visible = false
+	add_child(_summon_outline_root)
+
+func _clear_summon_outline() -> void:
+	if _summon_outline_root == null:
+		return
+	for child: Node in _summon_outline_root.get_children():
+		child.queue_free()
+	_summon_outline_root.visible = false
+
+func _refresh_summon_outline() -> void:
+	_clear_summon_outline()
+	if _highlighted_cells.is_empty():
+		return
+	_ensure_summon_outline_root()
+	if _summon_outline_root == null:
+		return
+
+	var boundary_cells: Dictionary = {}
+	for cell: Vector2i in _highlighted_cells:
+		boundary_cells[cell] = true
+
+	for cell: Vector2i in _highlighted_cells:
+		var tile: Node3D = _tile_instances.get(cell) as Node3D
+		if tile == null:
+			continue
+		var terrain: int = _map_terrain[cell.y][cell.x] as int
+		var base_y: float = TERRAIN_HEIGHTS.get(terrain, 0.12)
+		for side_index: int in range(HexCell3DScript.SIDE_COUNT):
+			var edge_marker: Marker3D = tile.get_node_or_null("edge[%d]" % side_index) as Marker3D
+			if edge_marker == null:
+				continue
+			var outward: Vector3 = edge_marker.global_transform.basis.z.normalized()
+			var sample_pos: Vector3 = edge_marker.global_transform.origin + outward * (HEX_SIZE * 0.9)
+			var nb: Vector2i = world_to_hex(sample_pos)
+			if nb != cell and boundary_cells.has(nb):
+				continue
+			var side_length: float = float(edge_marker.get_meta("side_length", 0.82))
+			var segment_mesh := BoxMesh.new()
+			segment_mesh.size = Vector3(side_length + 0.08, 0.03, 0.045)
+			var segment := MeshInstance3D.new()
+			segment.mesh = segment_mesh
+			segment.material_override = _summon_outline_material
+			segment.global_transform = edge_marker.global_transform
+			segment.position += outward * 0.08
+			segment.position.y = base_y + 0.055
+			_summon_outline_root.add_child(segment)
+
+	_summon_outline_root.visible = _summon_outline_root.get_child_count() > 0
+
+func _update_summon_outline_visual() -> void:
+	if _summon_outline_root == null or _summon_outline_material == null or not _summon_outline_root.visible:
+		return
+	var t: float = Time.get_ticks_msec() * 0.001
+	var pulse_phase: float = 0.5 + 0.5 * sin(t * 3.2)
+	var pulse: float = 1.02 + 0.42 * pulse_phase
+	var alpha: float = 0.74 + 0.20 * pulse_phase
+	_summon_outline_material.emission_energy_multiplier = pulse
+	_summon_outline_material.albedo_color = Color(0.38, 0.88, 1.0, alpha)
 
 # ─── Fallback terrain ─────────────────────────────────────────────────────────────
 func _fallback_terrain() -> void:
