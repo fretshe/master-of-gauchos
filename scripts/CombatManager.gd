@@ -38,8 +38,8 @@ const FACTION_CRIT_BONUS := 0.15
 const PRE_COMBAT_DRAMATIC_PAUSE := 0.24
 const PRE_COMBAT_RESULTS_HOLD := 0.34
 const PRE_COMBAT_SIDE_DELAY := 0.18
-const SUPER_CRIT_CHARGE_EXTRA := 0.24
-const SUPER_CRIT_CHARGE_HOLD := 0.16
+const SUPER_CRIT_CHARGE_EXTRA := 0.40
+const SUPER_CRIT_CHARGE_HOLD := 0.26
 const EXP_COMBAT_PARTICIPATION := 1
 const EXP_COMBAT_DAMAGE := 2
 const EXP_COMBAT_KILL := 4
@@ -185,7 +185,7 @@ func resolve_combat(attacker: Unit, defender: Unit,
 	var attacker_hit_count: int = attacker.get_ranged_attack_count_for_terrain(attacker_terrain) if is_ranged else attacker.get_attack_count_for_terrain(attacker_terrain)
 	if atk_cell != Vector2i(-1, -1) and def_cell != Vector2i(-1, -1):
 		combat_distance = _hex_distance(atk_cell, def_cell)
-	var ranged_counter_allowed: bool = is_ranged and defender != null and defender.can_attack_at_distance(combat_distance)
+	var ranged_counter_allowed: bool = is_ranged and defender != null and defender.has_ranged_attack() and defender.can_attack_at_distance(combat_distance)
 	var defender_hit_count: int = defender.get_ranged_attack_count_for_terrain(defender_terrain) if ranged_counter_allowed else defender.get_attack_count_for_terrain(defender_terrain)
 
 	# ── Bonus modifiers ──────────────────────────────────────────────────────────
@@ -417,7 +417,7 @@ func _plan_combat_sequence(attacker: Unit, defender: Unit, is_ranged: bool, type
 						attacker,
 						atk_dice,
 						type_mult,
-						attacker.get_damage_scale_per_hit(),
+						attacker.get_bonus_damage_multiplier(),
 						atk_crit_bonus,
 						0,  # ranged attacks don't benefit from melee bonuses
 						false, false,
@@ -437,7 +437,7 @@ func _plan_combat_sequence(attacker: Unit, defender: Unit, is_ranged: bool, type
 						defender,
 						def_dice,
 						defender_mult,
-						defender.get_damage_scale_per_hit(),
+						defender.get_bonus_damage_multiplier(),
 						def_crit_bonus
 					)
 					def_result["hit_index"] = hit_index + 1
@@ -458,7 +458,7 @@ func _plan_combat_sequence(attacker: Unit, defender: Unit, is_ranged: bool, type
 					attacker,
 					atk_dice,
 					type_mult,
-					attacker.get_damage_scale_per_hit(),
+					attacker.get_bonus_damage_multiplier(),
 					atk_crit_bonus,
 					0,  # ranged attacks don't benefit from melee bonuses
 					false, false,
@@ -480,7 +480,7 @@ func _plan_combat_sequence(attacker: Unit, defender: Unit, is_ranged: bool, type
 					attacker,
 					atk_dice,
 					type_mult,
-					attacker.get_damage_scale_per_hit(),
+					attacker.get_bonus_damage_multiplier(),
 					atk_crit_bonus,
 					atk_roll_bonus,
 					atk_force_first_blue and is_first,
@@ -501,7 +501,7 @@ func _plan_combat_sequence(attacker: Unit, defender: Unit, is_ranged: bool, type
 					defender,
 					def_dice,
 					defender_mult,
-					defender.get_damage_scale_per_hit(),
+					defender.get_bonus_damage_multiplier(),
 					def_crit_bonus
 				)
 				def_result["hit_index"] = hit_index + 1
@@ -609,11 +609,26 @@ func _roll_attack(unit: Unit, dice: Array, type_mult: float, damage_scale: float
 	max_total = maxi(0, max_total + roll_bonus)
 
 	var advantage_bonus: int = 1 if type_mult > 1.0 and total > 0 else 0
-	var damage: int = maxi(0, total + advantage_bonus)
+	if advantage_bonus > 0:
+		var marked_index: int = -1
+		for i: int in range(rolls.size()):
+			if int((rolls[i] as Dictionary).get("value", 0)) > 0:
+				marked_index = i
+				break
+		if marked_index == -1 and not rolls.is_empty():
+			marked_index = 0
+		if marked_index != -1:
+			var advantage_roll: Dictionary = rolls[marked_index]
+			advantage_roll["advantage_bonus"] = advantage_bonus
+			advantage_roll["display_value"] = int(advantage_roll.get("value", 0)) + advantage_bonus
+			rolls[marked_index] = advantage_roll
+	var scaled_total: float = float(total + advantage_bonus) * damage_scale
+	var damage: int = maxi(0, int(round(scaled_total)))
+	var critical_damage_multiplier: float = unit.get_bonus_critical_damage_multiplier()
 	if has_super_critical and damage > 0:
-		damage *= 3
+		damage = maxi(0, int(round(float(damage) * 2.7 * critical_damage_multiplier)))
 	elif has_critical and damage > 0:
-		damage *= 2
+		damage = maxi(0, int(round(float(damage) * 2.0 * critical_damage_multiplier)))
 	if damage > 0:
 		for i: int in range(rolls.size()):
 			var die_roll: Dictionary = rolls[i]
@@ -668,6 +683,10 @@ func _animate_dice_attack(roll_result: Dictionary, attacker_unit: Unit, defender
 		)
 		if is_super_critical and src_rend.has_method("anim_super_critical_charge"):
 			AudioManager.play_super_critical_charge()
+			if host != null and host.has_method("play_super_critical_camera_vignette"):
+				host.call("play_super_critical_camera_vignette", anticipation + SUPER_CRIT_CHARGE_EXTRA + 0.14, 0.34)
+			else:
+				VFXManager.show_super_critical_vignette(anticipation + SUPER_CRIT_CHARGE_EXTRA + 0.14)
 			var charge_camera = host.get_viewport().get_camera_3d()
 			if charge_camera != null and charge_camera.has_method("shake_combat"):
 				charge_camera.call("shake_combat", 0.08, anticipation + SUPER_CRIT_CHARGE_EXTRA + 0.18)
@@ -693,6 +712,7 @@ func _animate_dice_attack(roll_result: Dictionary, attacker_unit: Unit, defender
 	if dmg > 0 and dst_rend != null:
 		if is_super_critical:
 			AudioManager.play_super_critical()
+			AudioManager.play_massive_impact()
 			AudioManager.play_crowd_super_critical()
 			var crit_camera = host.get_viewport().get_camera_3d()
 			if crit_camera != null and crit_camera.has_method("shake_combat"):

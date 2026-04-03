@@ -61,7 +61,24 @@ const OWNER_COLORS: Dictionary = {
 const C_GOLD   := Color(0.42, 0.88, 1.00)
 const C_MOVE   := Color(0.25, 0.85, 0.25)
 const C_ATTACK := Color(0.90, 0.18, 0.18)
+const C_ATTACK_RANGED := Color(0.98, 0.58, 0.14)
 const C_SUMMON := Color(0.70, 0.15, 0.90)
+const ATTACK_INDICATOR_HEIGHT: float = 0.15
+const ATTACK_INDICATOR_PIXEL_SIZE: float = 0.011
+const ATTACK_INDICATOR_OUTLINE_SIZE: int = 6
+const ATTACK_INDICATOR_MELEE_TEXT: String = "X"
+const ATTACK_INDICATOR_RANGED_TEXT: String = "O"
+const OUTLINE_TOP_Y_OFFSET: float = 0.055
+const OUTLINE_TOP_DEPTH: float = 0.045
+const OUTLINE_TOP_HEIGHT: float = 0.03
+const OUTLINE_TOP_OVERLAP: float = 0.06
+const OUTLINE_RAIL_WIDTH: float = OUTLINE_TOP_DEPTH
+const OUTLINE_VERTICAL_INSET: float = 0.028
+const OUTLINE_MIN_VISIBLE_DROP: float = 0.025
+const OUTLINE_CORNER_JOINT_SIZE: float = 0.055
+const OUTLINE_ELBOW_WIDTH: float = OUTLINE_TOP_DEPTH
+const OUTLINE_WELD_RADIUS: float = 0.032
+const BOARD_EDGE_FLOOR_Y: float = 0.02
 const TOWER_VISUAL_OFFSET := Vector3(-0.08, 0.0, -0.50)
 const HEX_VISUAL_RADIUS_FACTOR: float = 0.96
 const COMBAT_STAGE_WALL_EXTRA_HEIGHT: float = 1.0
@@ -135,6 +152,8 @@ var _selected_unit:     Unit     = null
 var _selected_renderer: Node3D   = null
 var _move_cells:    Array    = []
 var _attack_cells:  Array    = []
+var _melee_attack_cells: Array[Vector2i] = []
+var _ranged_attack_cells: Array[Vector2i] = []
 var _hovered_cell: Vector2i = Vector2i(-1, -1)
 var _hovered_unit: Unit = null
 
@@ -147,6 +166,7 @@ var _move_outline_root: Node3D = null
 var _move_outline_material: StandardMaterial3D = null
 var _summon_outline_root: Node3D = null
 var _summon_outline_material: StandardMaterial3D = null
+var _attack_indicator_root: Node3D = null
 
 var _animating: bool = false
 var _is_night_visuals: bool = false
@@ -262,12 +282,16 @@ func place_unit(unit: Unit, col: int, row: int, defer_tower_capture: bool = fals
 			var capture_bonus: int = tower.capture(unit.owner_id)
 			if resource_manager != null and capture_bonus > 0:
 				resource_manager.add_essence(unit.owner_id, capture_bonus)
-			var tower_exp_reward: int = (ENEMY_TOWER_CAPTURE_EXP_REWARD if previous_owner_id > 0 else 0) + (2 if unit.bonus_raider else 0)
+			var tower_exp_reward: int = (2 if previous_owner_id > 0 else 3) + (2 if unit.bonus_raider else 0)
 			var exp_result: Dictionary = unit.gain_exp_with_result(tower_exp_reward)
 			var placed_renderer: Node3D = _unit_renderers.get(cell, null)
 			if placed_renderer != null and placed_renderer.has_method("set_health_bar_values"):
 				placed_renderer.call("set_health_bar_values", unit.hp, unit.max_hp, true)
 			_update_tower_visual(cell)
+			VFXManager.show_tower_capture_beam(
+				hex_to_world(cell.x, cell.y) + Vector3(0.0, TERRAIN_HEIGHTS.get(_map_terrain[cell.y][cell.x] as int, 0.12), 0.0),
+				GameData.get_player_color(unit.owner_id)
+			)
 			emit_signal("tower_captured", tower.tower_name, unit.owner_id)
 			AudioManager.play_capture()
 			if capture_bonus > 0:
@@ -357,12 +381,16 @@ func resolve_end_turn_tower_captures(player_id: int) -> void:
 		var capture_bonus: int = tower.capture(unit.owner_id)
 		if resource_manager != null and capture_bonus > 0:
 			resource_manager.add_essence(unit.owner_id, capture_bonus)
-		var tower_exp_reward: int = (ENEMY_TOWER_CAPTURE_EXP_REWARD if previous_owner_id > 0 else 0) + (2 if unit.bonus_raider else 0)
+		var tower_exp_reward: int = (2 if previous_owner_id > 0 else 3) + (2 if unit.bonus_raider else 0)
 		var exp_result: Dictionary = unit.gain_exp_with_result(tower_exp_reward)
 		var renderer: Node3D = _unit_renderers.get(cell, null)
 		if renderer != null and renderer.has_method("set_health_bar_values"):
 			renderer.call("set_health_bar_values", unit.hp, unit.max_hp, true)
 		_update_tower_visual(cell)
+		VFXManager.show_tower_capture_beam(
+			hex_to_world(cell.x, cell.y) + Vector3(0.0, TERRAIN_HEIGHTS.get(_map_terrain[cell.y][cell.x] as int, 0.12), 0.0),
+			GameData.get_player_color(unit.owner_id)
+		)
 		emit_signal("tower_captured", tower.tower_name, unit.owner_id)
 		AudioManager.play_capture()
 		if capture_bonus > 0:
@@ -443,6 +471,8 @@ func get_action_options_for_unit(unit: Unit) -> Dictionary:
 		return {"cell": Vector2i(-1, -1), "move_cells": [], "attack_cells": []}
 	var saved_move: Array = _move_cells.duplicate()
 	var saved_attack: Array = _attack_cells.duplicate()
+	var saved_melee: Array[Vector2i] = _melee_attack_cells.duplicate()
+	var saved_ranged: Array[Vector2i] = _ranged_attack_cells.duplicate()
 	_compute_highlights(cell.x, cell.y, unit)
 	var result := {
 		"cell": cell,
@@ -451,6 +481,8 @@ func get_action_options_for_unit(unit: Unit) -> Dictionary:
 	}
 	_move_cells = saved_move
 	_attack_cells = saved_attack
+	_melee_attack_cells = saved_melee
+	_ranged_attack_cells = saved_ranged
 	return result
 
 func get_distance_between_cells(a: Vector2i, b: Vector2i) -> int:
@@ -913,13 +945,17 @@ func _apply_selection_highlights() -> void:
 		_set_highlight_range(_selected_cell, "select")
 	for cell: Vector2i in _move_cells:
 		_set_highlight_range(cell, "move")
-	for cell: Vector2i in _attack_cells:
-		var dist: int = _hex_distance(_selected_cell, cell) if _selected_cell != Vector2i(-1, -1) else 1
-		_set_highlight_range(cell, "attack_ranged" if dist > 1 else "attack")
+	for cell: Vector2i in _melee_attack_cells:
+		_set_highlight_range(cell, "attack")
+		_add_attack_indicator(cell, false)
+	for cell: Vector2i in _ranged_attack_cells:
+		_set_highlight_range(cell, "attack_ranged")
+		_add_attack_indicator(cell, true)
 	_refresh_move_outline()
 
 func _clear_range_highlights() -> void:
 	_set_selection_focus(false)
+	_clear_attack_indicators()
 	for cell: Vector2i in _range_cells:
 		_set_highlight(cell, false)
 	_range_cells.clear()
@@ -944,11 +980,11 @@ func _set_highlight(cell: Vector2i, on: bool, mode: String = "select") -> void:
 				mat.set_shader_parameter("albedo_color",   base_albedo.lerp(Color(0.92, 1.0, 0.92), 0.34))
 				mat.set_shader_parameter("emission_color", Color.BLACK)
 			"attack":
-				mat.set_shader_parameter("albedo_color",   base_albedo)
-				mat.set_shader_parameter("emission_color", Color(0.55, 0.12, 0.12))
+				mat.set_shader_parameter("albedo_color",   base_albedo.lerp(Color(1.0, 0.46, 0.42), 0.22))
+				mat.set_shader_parameter("emission_color", C_ATTACK)
 			"attack_ranged":
-				mat.set_shader_parameter("albedo_color",   base_albedo)
-				mat.set_shader_parameter("emission_color", Color(0.55, 0.32, 0.04))
+				mat.set_shader_parameter("albedo_color",   base_albedo.lerp(Color(1.0, 0.72, 0.36), 0.24))
+				mat.set_shader_parameter("emission_color", C_ATTACK_RANGED)
 			"summon":
 				mat.set_shader_parameter("albedo_color",   base_albedo.lerp(Color(0.98, 0.92, 1.0), 0.28))
 				mat.set_shader_parameter("emission_color", Color.BLACK)
@@ -989,6 +1025,42 @@ func _set_selection_focus(active: bool) -> void:
 		var mat: ShaderMaterial = mat_value as ShaderMaterial
 		if mat != null:
 			mat.set_shader_parameter("dim_factor", dim_factor)
+
+func _ensure_attack_indicator_root() -> Node3D:
+	if _attack_indicator_root != null:
+		return _attack_indicator_root
+	_attack_indicator_root = Node3D.new()
+	_attack_indicator_root.name = "AttackIndicators"
+	add_child(_attack_indicator_root)
+	return _attack_indicator_root
+
+func _clear_attack_indicators() -> void:
+	if _attack_indicator_root == null:
+		return
+	_attack_indicator_root.queue_free()
+	_attack_indicator_root = null
+
+func _add_attack_indicator(cell: Vector2i, is_ranged: bool) -> void:
+	var root: Node3D = _ensure_attack_indicator_root()
+	var label := Label3D.new()
+	label.text = ATTACK_INDICATOR_RANGED_TEXT if is_ranged else ATTACK_INDICATOR_MELEE_TEXT
+	label.font_size = 24
+	label.pixel_size = ATTACK_INDICATOR_PIXEL_SIZE
+	label.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+	label.no_depth_test = true
+	label.outline_size = ATTACK_INDICATOR_OUTLINE_SIZE
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.modulate = C_ATTACK_RANGED if is_ranged else C_ATTACK
+	label.outline_modulate = Color(0.16, 0.08, 0.02, 0.92) if is_ranged else Color(0.20, 0.03, 0.03, 0.92)
+	label.position = _get_attack_indicator_world_position(cell)
+	GameData.apply_selected_font_to_label3d(label)
+	root.add_child(label)
+
+func _get_attack_indicator_world_position(cell: Vector2i) -> Vector3:
+	var world_pos: Vector3 = hex_to_world(cell.x, cell.y)
+	var terrain: int = _map_terrain[cell.y][cell.x] as int
+	var tile_top_y: float = TERRAIN_HEIGHTS.get(terrain, 0.12)
+	return Vector3(world_pos.x, tile_top_y + ATTACK_INDICATOR_HEIGHT, world_pos.z)
 
 func _clear_matchup_indicators() -> void:
 	for renderer_value: Variant in _unit_renderers.values():
@@ -1039,6 +1111,8 @@ func _show_master_placement_hints() -> void:
 func _compute_highlights(col: int, row: int, unit: Unit) -> void:
 	_move_cells.clear()
 	_attack_cells.clear()
+	_melee_attack_cells.clear()
+	_ranged_attack_cells.clear()
 
 	var moves_left: int = unit.get_moves_left()
 
@@ -1082,6 +1156,8 @@ func _compute_highlights(col: int, row: int, unit: Unit) -> void:
 		if nb_unit != null and nb_unit.owner_id != unit.owner_id and not nb_unit.untargetable:
 			if nb not in _attack_cells:
 				_attack_cells.append(nb)
+			if nb not in _melee_attack_cells:
+				_melee_attack_cells.append(nb)
 
 	# Ranged attack (Archer, Lancer, Nativos/Brujos Master): distance 2
 	for distance: int in range(2, maxi(2, unit.attack_range) + 1):
@@ -1096,6 +1172,8 @@ func _compute_highlights(col: int, row: int, unit: Unit) -> void:
 				if t_unit != null and t_unit.owner_id != unit.owner_id and not t_unit.untargetable:
 					if target not in _attack_cells:
 						_attack_cells.append(target)
+					if target not in _ranged_attack_cells:
+						_ranged_attack_cells.append(target)
 
 func _unit_has_actions(col: int, row: int, unit: Unit) -> bool:
 	_compute_highlights(col, row, unit)
@@ -1282,6 +1360,10 @@ func _handle_click(screen_pos: Vector2) -> void:
 				_clear_range_highlights()
 				_selected_cell = Vector2i(-1, -1)
 				_selected_unit = null
+				_move_cells.clear()
+				_attack_cells.clear()
+				_melee_attack_cells.clear()
+				_ranged_attack_cells.clear()
 				if _selected_renderer != null:
 					_selected_renderer.call("set_selected", false)
 			emit_signal("unit_selected", unit)
@@ -1326,6 +1408,10 @@ func _handle_click(screen_pos: Vector2) -> void:
 		else:
 			_selected_cell = Vector2i(-1, -1)
 			_selected_unit = null
+			_move_cells.clear()
+			_attack_cells.clear()
+			_melee_attack_cells.clear()
+			_ranged_attack_cells.clear()
 			if _selected_renderer != null:
 				_selected_renderer.call("set_selected", false)
 		emit_signal("unit_selected", other)
@@ -1388,6 +1474,10 @@ func _move_unit(from: Vector2i, to: Vector2i) -> void:
 		if renderer_after_capture != null and renderer_after_capture.has_method("set_health_bar_values"):
 			renderer_after_capture.call("set_health_bar_values", unit.hp, unit.max_hp, true)
 		_update_tower_visual(to)
+		VFXManager.show_tower_capture_beam(
+			hex_to_world(to.x, to.y) + Vector3(0.0, TERRAIN_HEIGHTS.get(_map_terrain[to.y][to.x] as int, 0.12), 0.0),
+			GameData.get_player_color(unit.owner_id)
+		)
 		emit_signal("tower_captured", tower.tower_name, unit.owner_id)
 		AudioManager.play_capture()
 		if capture_bonus > 0:
@@ -1414,6 +1504,10 @@ func _move_unit(from: Vector2i, to: Vector2i) -> void:
 	if _move_cells.is_empty() and _attack_cells.is_empty():
 		_selected_cell = Vector2i(-1, -1)
 		_selected_unit = null
+		_move_cells.clear()
+		_attack_cells.clear()
+		_melee_attack_cells.clear()
+		_ranged_attack_cells.clear()
 		_clear_range_highlights()
 		if _selected_renderer != null:
 			_selected_renderer.call("set_selected", false)
@@ -1528,6 +1622,8 @@ func _deselect() -> void:
 	_selected_unit = null
 	_move_cells.clear()
 	_attack_cells.clear()
+	_melee_attack_cells.clear()
+	_ranged_attack_cells.clear()
 	_clear_range_highlights()
 	emit_signal("unit_deselected")
 	if _hovered_unit != null:
@@ -1606,6 +1702,7 @@ func _build_grid() -> void:
 			mat.set_shader_parameter("night_glow_strength", 0.0)
 			_apply_cloud_shadow_params(mat, false)
 			mat.next_pass = _get_terrain_outline_mat()
+			_configure_tile_material(mat, terrain, Vector2i(col, row))
 
 			var inst: MeshInstance3D = MeshInstance3D.new()
 			inst.mesh              = _terrain_meshes[terrain]
@@ -2065,7 +2162,7 @@ func apply_time_of_day_visuals(is_night: bool, moon_strength: float) -> void:
 		var tile: Vector2i = cell as Vector2i
 		var mat: ShaderMaterial = _tile_materials[tile] as ShaderMaterial
 		if mat != null:
-			_configure_tile_material(mat, _map_terrain[tile.y][tile.x] as int)
+			_configure_tile_material(mat, _map_terrain[tile.y][tile.x] as int, tile)
 
 	for cell: Variant in _tower_instances.keys():
 		var tower_cell: Vector2i = cell as Vector2i
@@ -2270,9 +2367,9 @@ func _add_combat_stage_wall_segment(root: Node3D, start: Vector3, finish: Vector
 	wall.rotation_degrees.y = rad_to_deg(atan2(delta.x, delta.z))
 	root.add_child(wall)
 
-func _configure_tile_material(mat: ShaderMaterial, terrain: int) -> void:
+func _configure_tile_material(mat: ShaderMaterial, terrain: int, cell: Vector2i = Vector2i(-1, -1)) -> void:
 	_apply_cloud_shadow_params(mat, false)
-	_apply_terrain_style_params(mat, terrain)
+	_apply_terrain_style_params(mat, terrain, cell)
 	if _is_night_visuals:
 		mat.set_shader_parameter("shadow_threshold", 0.40)
 		mat.set_shader_parameter("highlight_threshold", 0.84)
@@ -2295,21 +2392,33 @@ func _configure_tile_material(mat: ShaderMaterial, terrain: int) -> void:
 	mat.set_shader_parameter("night_glow_color", Color(0.20, 0.32, 0.55, 1.0))
 	mat.set_shader_parameter("night_glow_strength", 0.0)
 
-func _apply_terrain_style_params(mat: ShaderMaterial, terrain: int) -> void:
+func _apply_terrain_style_params(mat: ShaderMaterial, terrain: int, cell: Vector2i = Vector2i(-1, -1)) -> void:
 	mat.set_shader_parameter("terrain_shadow_response", 1.0)
 	mat.set_shader_parameter("terrain_sunbreak_response", 1.0)
 	mat.set_shader_parameter("terrain_ambient_lift", 1.0)
 	mat.set_shader_parameter("water_shimmer_strength", 0.0)
 	mat.set_shader_parameter("water_shimmer_speed", 0.0)
 	mat.set_shader_parameter("water_shimmer_tint", Vector3(0.88, 0.96, 1.10))
+	mat.set_shader_parameter("water_depth_strength", 0.0)
+	mat.set_shader_parameter("water_edge_foam_strength", 0.0)
+	mat.set_shader_parameter("water_wave_strength", 0.0)
+	mat.set_shader_parameter("water_wave_scale", 2.6)
+	mat.set_shader_parameter("water_wave_speed", 0.0)
+	mat.set_shader_parameter("water_deep_tint", Vector3(0.62, 0.84, 1.08))
+	mat.set_shader_parameter("water_edge_tint", Vector3(1.06, 1.14, 1.18))
+	mat.set_shader_parameter("water_edge_mask_a", Vector4.ZERO)
+	mat.set_shader_parameter("water_edge_mask_b", Vector4.ZERO)
+	mat.set_shader_parameter("water_sky_reflect_strength", 0.0)
+	mat.set_shader_parameter("water_star_reflect_strength", 0.0)
+	mat.set_shader_parameter("water_sky_top_tint", Vector3(0.80, 0.92, 1.06))
+	mat.set_shader_parameter("water_sky_horizon_tint", Vector3(1.06, 0.78, 0.58))
+	mat.set_shader_parameter("water_star_tint", Vector3(0.92, 0.96, 1.0))
 	match terrain:
 		Terrain.WATER:
-			mat.set_shader_parameter("terrain_shadow_response", 0.68)
-			mat.set_shader_parameter("terrain_sunbreak_response", 1.35)
-			mat.set_shader_parameter("terrain_ambient_lift", 1.06)
-			mat.set_shader_parameter("water_shimmer_strength", 0.22 if not _is_night_visuals else 0.12)
-			mat.set_shader_parameter("water_shimmer_speed", 0.085 if not _is_night_visuals else 0.040)
-			mat.set_shader_parameter("water_shimmer_tint", Vector3(0.92, 1.00, 1.14))
+			mat.set_shader_parameter("water_sky_reflect_strength", 0.46 if not _is_night_visuals else 0.20)
+			mat.set_shader_parameter("water_star_reflect_strength", 0.0 if not _is_night_visuals else 0.52)
+			mat.set_shader_parameter("water_sky_top_tint", Vector3(0.80, 0.92, 1.08) if not _is_night_visuals else Vector3(0.22, 0.32, 0.48))
+			mat.set_shader_parameter("water_sky_horizon_tint", Vector3(1.08, 0.80, 0.60) if not _is_night_visuals else Vector3(0.14, 0.22, 0.34))
 		Terrain.MOUNTAIN, Terrain.CORDILLERA:
 			mat.set_shader_parameter("terrain_shadow_response", 1.24)
 			mat.set_shader_parameter("terrain_sunbreak_response", 0.72)
@@ -2322,6 +2431,33 @@ func _apply_terrain_style_params(mat: ShaderMaterial, terrain: int) -> void:
 			mat.set_shader_parameter("terrain_shadow_response", 0.82)
 			mat.set_shader_parameter("terrain_sunbreak_response", 1.22)
 			mat.set_shader_parameter("terrain_ambient_lift", 1.04)
+
+func _apply_water_edge_mask(mat: ShaderMaterial, cell: Vector2i) -> void:
+	var offsets: Array = NEIGHBORS_ODD if cell.x % 2 == 1 else NEIGHBORS_EVEN
+	var edge_mask_a := Vector4.ZERO
+	var edge_mask_b := Vector4.ZERO
+	for i: int in range(6):
+		var neighbor: Vector2i = cell + (offsets[i] as Vector2i)
+		var touches_land: bool = false
+		if neighbor.x >= 0 and neighbor.x < COLS and neighbor.y >= 0 and neighbor.y < ROWS:
+			touches_land = int(_map_terrain[neighbor.y][neighbor.x]) != Terrain.WATER
+		if not touches_land:
+			continue
+		match i:
+			0:
+				edge_mask_a.x = 1.0
+			1:
+				edge_mask_a.y = 1.0
+			2:
+				edge_mask_a.z = 1.0
+			3:
+				edge_mask_a.w = 1.0
+			4:
+				edge_mask_b.x = 1.0
+			5:
+				edge_mask_b.y = 1.0
+	mat.set_shader_parameter("water_edge_mask_a", edge_mask_a)
+	mat.set_shader_parameter("water_edge_mask_b", edge_mask_b)
 
 func _create_tower_material(base_color: Color, owner_id: int, owner_mix: float, emission_strength: float) -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
@@ -2797,31 +2933,7 @@ func _refresh_move_outline() -> void:
 	if _selected_cell != Vector2i(-1, -1):
 		boundary_cells[_selected_cell] = true
 
-	for cell: Vector2i in _move_cells:
-		var tile: Node3D = _tile_instances.get(cell) as Node3D
-		if tile == null:
-			continue
-		var terrain: int = _map_terrain[cell.y][cell.x] as int
-		var base_y: float = TERRAIN_HEIGHTS.get(terrain, 0.12)
-		for side_index: int in range(HexCell3DScript.SIDE_COUNT):
-			var edge_marker: Marker3D = tile.get_node_or_null("edge[%d]" % side_index) as Marker3D
-			if edge_marker == null:
-				continue
-			var outward: Vector3 = edge_marker.global_transform.basis.z.normalized()
-			var sample_pos: Vector3 = edge_marker.global_transform.origin + outward * (HEX_SIZE * 0.9)
-			var nb: Vector2i = world_to_hex(sample_pos)
-			if nb != cell and boundary_cells.has(nb):
-				continue
-			var side_length: float = float(edge_marker.get_meta("side_length", 0.82))
-			var segment_mesh := BoxMesh.new()
-			segment_mesh.size = Vector3(side_length + 0.08, 0.03, 0.045)
-			var segment := MeshInstance3D.new()
-			segment.mesh = segment_mesh
-			segment.material_override = _move_outline_material
-			segment.global_transform = edge_marker.global_transform
-			segment.position += outward * 0.08
-			segment.position.y = base_y + 0.055
-			_move_outline_root.add_child(segment)
+	_build_outline_segments(_move_outline_root, _move_outline_material, _move_cells, boundary_cells)
 
 	_move_outline_root.visible = _move_outline_root.get_child_count() > 0
 
@@ -2834,6 +2946,171 @@ func _update_move_outline_visual() -> void:
 	var alpha: float = 0.78 + 0.20 * pulse_phase
 	_move_outline_material.emission_energy_multiplier = pulse
 	_move_outline_material.albedo_color = Color(1.0, 0.92, 0.16, alpha)
+
+func _build_outline_segments(root: Node3D, material: Material, cells: Array, boundary_cells: Dictionary) -> void:
+	var boundary_edges: Array[Dictionary] = []
+	var corner_points: Dictionary = {}
+	var corner_counts: Dictionary = {}
+	for cell_value: Variant in cells:
+		var cell: Vector2i = cell_value as Vector2i
+		var tile: Node3D = _tile_instances.get(cell) as Node3D
+		if tile == null:
+			continue
+		var base_y: float = _get_cell_top_y(cell)
+		for side_index: int in range(HexCell3DScript.SIDE_COUNT):
+			var edge_marker: Marker3D = tile.get_node_or_null("edge[%d]" % side_index) as Marker3D
+			if edge_marker == null:
+				continue
+			var neighbor: Vector2i = _get_outline_neighbor_cell(cell, edge_marker)
+			if neighbor != cell and boundary_cells.has(neighbor):
+				continue
+			var corners: Array[Dictionary] = _collect_outline_corner_points(corner_points, corner_counts, edge_marker, base_y)
+			boundary_edges.append({
+				"edge_marker": edge_marker,
+				"base_y": base_y,
+				"neighbor_y": _get_outline_neighbor_top_y(neighbor),
+				"corners": corners,
+			})
+	for edge_value: Variant in boundary_edges:
+		var edge: Dictionary = edge_value as Dictionary
+		_add_outline_top_segment(root, material, edge.get("edge_marker") as Marker3D, float(edge.get("base_y", 0.0)))
+		_add_outline_edge_rail(
+			root,
+			material,
+			edge.get("edge_marker") as Marker3D,
+			float(edge.get("base_y", 0.0)),
+			float(edge.get("neighbor_y", 0.0)),
+			edge.get("corners", []) as Array,
+			corner_counts
+		)
+	for point_value: Variant in corner_points.values():
+		_add_outline_corner_joint(root, material, point_value as Vector3)
+
+func _get_cell_top_y(cell: Vector2i) -> float:
+	if cell.x < 0 or cell.x >= COLS or cell.y < 0 or cell.y >= ROWS:
+		return BOARD_EDGE_FLOOR_Y
+	var terrain: int = _map_terrain[cell.y][cell.x] as int
+	return TERRAIN_HEIGHTS.get(terrain, 0.12)
+
+func _get_outline_neighbor_cell(cell: Vector2i, edge_marker: Marker3D) -> Vector2i:
+	var outward: Vector3 = edge_marker.global_transform.basis.z.normalized()
+	var sample_pos: Vector3 = edge_marker.global_transform.origin + outward * (HEX_SIZE * 0.9)
+	var neighbor: Vector2i = world_to_hex(sample_pos)
+	return neighbor if neighbor != cell else Vector2i(-1, -1)
+
+func _get_outline_neighbor_top_y(cell: Vector2i) -> float:
+	if cell == Vector2i(-1, -1):
+		return BOARD_EDGE_FLOOR_Y
+	return _get_cell_top_y(cell)
+
+func _add_outline_top_segment(root: Node3D, material: Material, edge_marker: Marker3D, base_y: float) -> void:
+	var outward: Vector3 = edge_marker.global_transform.basis.z.normalized()
+	var side_length: float = float(edge_marker.get_meta("side_length", 0.82))
+	var extended_length: float = side_length + OUTLINE_TOP_OVERLAP
+	var segment_mesh := BoxMesh.new()
+	segment_mesh.size = Vector3(extended_length, OUTLINE_TOP_HEIGHT, OUTLINE_TOP_DEPTH)
+	var segment := MeshInstance3D.new()
+	segment.mesh = segment_mesh
+	segment.material_override = material
+	segment.global_transform = edge_marker.global_transform
+	segment.position += outward * 0.08
+	segment.position.y = base_y + OUTLINE_TOP_Y_OFFSET
+	root.add_child(segment)
+
+func _collect_outline_corner_points(corner_points: Dictionary, corner_counts: Dictionary, edge_marker: Marker3D, base_y: float) -> Array[Dictionary]:
+	var tangent: Vector3 = (-edge_marker.global_transform.basis.x).normalized()
+	var outward: Vector3 = edge_marker.global_transform.basis.z.normalized()
+	var side_length: float = float(edge_marker.get_meta("side_length", 0.82))
+	var half_length: float = (side_length + OUTLINE_TOP_OVERLAP) * 0.5
+	var corners: Array[Dictionary] = []
+	for direction: int in [-1, 1]:
+		var raw_point: Vector3 = edge_marker.global_transform.origin + tangent * half_length * float(direction)
+		raw_point.y = base_y + OUTLINE_TOP_Y_OFFSET
+		var point: Vector3 = raw_point + outward * 0.08
+		point.y = base_y + OUTLINE_TOP_Y_OFFSET
+		var key: String = _outline_corner_key(raw_point)
+		if not corner_points.has(key):
+			corner_points[key] = point
+		corner_counts[key] = int(corner_counts.get(key, 0)) + 1
+		corners.append({
+			"key": key,
+			"point": point,
+		})
+	return corners
+
+func _outline_corner_key(point: Vector3) -> String:
+	return "%.3f|%.3f|%.3f" % [point.x, point.y, point.z]
+
+func _add_outline_corner_joint(root: Node3D, material: Material, point: Vector3) -> void:
+	var joint_mesh := CylinderMesh.new()
+	joint_mesh.top_radius = OUTLINE_WELD_RADIUS
+	joint_mesh.bottom_radius = OUTLINE_WELD_RADIUS
+	joint_mesh.height = OUTLINE_TOP_HEIGHT
+	joint_mesh.radial_segments = 12
+	var joint := MeshInstance3D.new()
+	joint.mesh = joint_mesh
+	joint.material_override = material
+	joint.position = point
+	root.add_child(joint)
+
+func _add_outline_edge_rail(root: Node3D, material: Material, edge_marker: Marker3D, from_y: float, to_y: float, corners: Array, corner_counts: Dictionary) -> void:
+	var top_y: float = from_y + OUTLINE_TOP_Y_OFFSET
+	var bottom_y: float = to_y + OUTLINE_TOP_Y_OFFSET
+	var drop: float = absf(top_y - bottom_y)
+	if drop < OUTLINE_MIN_VISIBLE_DROP:
+		return
+	var outward: Vector3 = edge_marker.global_transform.basis.z.normalized()
+	for corner_value: Variant in corners:
+		var corner_data: Dictionary = corner_value as Dictionary
+		var key: String = str(corner_data.get("key", ""))
+		if int(corner_counts.get(key, 0)) < 2:
+			continue
+		var corner: Vector3 = corner_data.get("point", Vector3.ZERO) as Vector3
+		var rail_anchor: Vector3 = Vector3(corner.x, corner.y, corner.z) + outward * (OUTLINE_VERTICAL_INSET - 0.08)
+		_add_outline_corner_elbow(root, material, edge_marker, corner, rail_anchor, top_y)
+		_add_outline_weld_joint(root, material, rail_anchor, top_y)
+		_add_outline_corner_rail(
+			root,
+			material,
+			rail_anchor,
+			top_y,
+			bottom_y
+		)
+
+func _add_outline_corner_elbow(root: Node3D, material: Material, edge_marker: Marker3D, corner: Vector3, rail_anchor: Vector3, top_y: float) -> void:
+	var elbow_length: float = corner.distance_to(rail_anchor)
+	if elbow_length <= 0.001:
+		return
+	var elbow_mesh := BoxMesh.new()
+	elbow_mesh.size = Vector3(OUTLINE_ELBOW_WIDTH, OUTLINE_TOP_HEIGHT, elbow_length + OUTLINE_RAIL_WIDTH)
+	var elbow := MeshInstance3D.new()
+	elbow.mesh = elbow_mesh
+	elbow.material_override = material
+	elbow.global_transform = edge_marker.global_transform
+	elbow.position = corner.lerp(rail_anchor, 0.5)
+	elbow.position.y = top_y
+	root.add_child(elbow)
+
+func _add_outline_weld_joint(root: Node3D, material: Material, point: Vector3, y_pos: float) -> void:
+	var weld_mesh := CylinderMesh.new()
+	weld_mesh.top_radius = OUTLINE_WELD_RADIUS
+	weld_mesh.bottom_radius = OUTLINE_WELD_RADIUS
+	weld_mesh.height = OUTLINE_TOP_HEIGHT
+	weld_mesh.radial_segments = 12
+	var weld := MeshInstance3D.new()
+	weld.mesh = weld_mesh
+	weld.material_override = material
+	weld.position = Vector3(point.x, y_pos, point.z)
+	root.add_child(weld)
+
+func _add_outline_corner_rail(root: Node3D, material: Material, anchor: Vector3, top_y: float, bottom_y: float) -> void:
+	var rail_mesh := BoxMesh.new()
+	rail_mesh.size = Vector3(OUTLINE_RAIL_WIDTH, absf(top_y - bottom_y), OUTLINE_RAIL_WIDTH)
+	var rail := MeshInstance3D.new()
+	rail.mesh = rail_mesh
+	rail.material_override = material
+	rail.position = Vector3(anchor.x, (top_y + bottom_y) * 0.5, anchor.z)
+	root.add_child(rail)
 
 func _ensure_summon_outline_root() -> void:
 	if _summon_outline_root != null:
@@ -2871,31 +3148,7 @@ func _refresh_summon_outline() -> void:
 	for cell: Vector2i in _highlighted_cells:
 		boundary_cells[cell] = true
 
-	for cell: Vector2i in _highlighted_cells:
-		var tile: Node3D = _tile_instances.get(cell) as Node3D
-		if tile == null:
-			continue
-		var terrain: int = _map_terrain[cell.y][cell.x] as int
-		var base_y: float = TERRAIN_HEIGHTS.get(terrain, 0.12)
-		for side_index: int in range(HexCell3DScript.SIDE_COUNT):
-			var edge_marker: Marker3D = tile.get_node_or_null("edge[%d]" % side_index) as Marker3D
-			if edge_marker == null:
-				continue
-			var outward: Vector3 = edge_marker.global_transform.basis.z.normalized()
-			var sample_pos: Vector3 = edge_marker.global_transform.origin + outward * (HEX_SIZE * 0.9)
-			var nb: Vector2i = world_to_hex(sample_pos)
-			if nb != cell and boundary_cells.has(nb):
-				continue
-			var side_length: float = float(edge_marker.get_meta("side_length", 0.82))
-			var segment_mesh := BoxMesh.new()
-			segment_mesh.size = Vector3(side_length + 0.08, 0.03, 0.045)
-			var segment := MeshInstance3D.new()
-			segment.mesh = segment_mesh
-			segment.material_override = _summon_outline_material
-			segment.global_transform = edge_marker.global_transform
-			segment.position += outward * 0.08
-			segment.position.y = base_y + 0.055
-			_summon_outline_root.add_child(segment)
+	_build_outline_segments(_summon_outline_root, _summon_outline_material, _highlighted_cells, boundary_cells)
 
 	_summon_outline_root.visible = _summon_outline_root.get_child_count() > 0
 

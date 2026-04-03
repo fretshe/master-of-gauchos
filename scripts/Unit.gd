@@ -31,10 +31,10 @@ const DICE := {
 }
 
 const UNIT_MELEE_DICE := {
-	UnitType.WARRIOR: [DiceColor.SILVER, DiceColor.GOLD, DiceColor.GOLD, DiceColor.PLATINUM, DiceColor.DIAMOND],
+	UnitType.WARRIOR: [DiceColor.BRONZE, DiceColor.SILVER, DiceColor.GOLD, DiceColor.PLATINUM, DiceColor.DIAMOND],
 	UnitType.ARCHER: [DiceColor.BRONZE, DiceColor.SILVER, DiceColor.GOLD, DiceColor.GOLD, DiceColor.PLATINUM],
 	UnitType.LANCER: [DiceColor.BRONZE, DiceColor.SILVER, DiceColor.GOLD, DiceColor.GOLD, DiceColor.PLATINUM],
-	UnitType.RIDER: [DiceColor.SILVER, DiceColor.GOLD, DiceColor.GOLD, DiceColor.PLATINUM, DiceColor.DIAMOND],
+	UnitType.RIDER: [DiceColor.BRONZE, DiceColor.SILVER, DiceColor.GOLD, DiceColor.PLATINUM, DiceColor.DIAMOND],
 }
 
 const UNIT_RANGED_DICE := {
@@ -116,11 +116,16 @@ var untargetable: bool = false
 
 var active_bonuses: Array[String] = []
 var bonus_tough_skin: bool = false
+var bonus_hardened_hide: bool = false
+var bonus_colossus: bool = false
 var bonus_veteran: bool = false
 var bonus_immune: bool = false
 var bonus_resistant: bool = false
 var bonus_swiftness: bool = false
 var bonus_raider: bool = false
+var bonus_bloodletting: bool = false
+var bonus_slayer_instinct: bool = false
+var bonus_cataclysm: bool = false
 var bonus_fury: bool = false
 var bonus_battle_veteran: bool = false
 var bonus_cleaver: bool = false
@@ -162,32 +167,32 @@ func get_max_hp() -> int:
 	match unit_type:
 		UnitType.WARRIOR:
 			match level:
+				Level.BRONZE: return 20
+				Level.SILVER: return 36
+				Level.GOLD: return 54
+				Level.PLATINUM: return 72
+				Level.DIAMOND: return 92
+		UnitType.ARCHER:
+			match level:
+				Level.BRONZE: return 13
+				Level.SILVER: return 21
+				Level.GOLD: return 32
+				Level.PLATINUM: return 42
+				Level.DIAMOND: return 54
+		UnitType.LANCER:
+			match level:
+				Level.BRONZE: return 23
+				Level.SILVER: return 40
+				Level.GOLD: return 60
+				Level.PLATINUM: return 79
+				Level.DIAMOND: return 100
+		UnitType.RIDER:
+			match level:
 				Level.BRONZE: return 18
 				Level.SILVER: return 32
 				Level.GOLD: return 48
 				Level.PLATINUM: return 64
 				Level.DIAMOND: return 82
-		UnitType.ARCHER:
-			match level:
-				Level.BRONZE: return 11
-				Level.SILVER: return 18
-				Level.GOLD: return 28
-				Level.PLATINUM: return 37
-				Level.DIAMOND: return 48
-		UnitType.LANCER:
-			match level:
-				Level.BRONZE: return 20
-				Level.SILVER: return 36
-				Level.GOLD: return 54
-				Level.PLATINUM: return 71
-				Level.DIAMOND: return 90
-		UnitType.RIDER:
-			match level:
-				Level.BRONZE: return 16
-				Level.SILVER: return 28
-				Level.GOLD: return 42
-				Level.PLATINUM: return 56
-				Level.DIAMOND: return 72
 	return 5
 
 func _apply_stats() -> void:
@@ -221,6 +226,10 @@ func get_attack_count_for_terrain(terrain_type: int) -> int:
 	return maxi(1, clampi(get_base_attack_count() + get_terrain_attack_modifier(terrain_type), 1, 6) - attack_debuff)
 
 func get_ranged_attack_count_for_terrain(terrain_type: int) -> int:
+	if not has_ranged_attack():
+		return 0
+	if unit_type == UnitType.LANCER:
+		return 1
 	var base: int = BASE_RANGED_ATTACKS_PER_COMBAT.get(unit_type, get_base_attack_count())
 	if bonus_volley:
 		base += 1
@@ -231,7 +240,27 @@ func get_damage_scale_per_hit() -> float:
 	if table.is_empty():
 		return 1.0
 	var idx: int = clampi(level - 1, 0, table.size() - 1)
-	return float(table[idx])
+	return float(table[idx]) * get_bonus_damage_multiplier()
+
+func get_bonus_damage_multiplier() -> float:
+	var bonus_multiplier: float = 1.0
+	if bonus_bloodletting:
+		bonus_multiplier += 0.08
+	if bonus_slayer_instinct:
+		bonus_multiplier += 0.14
+	if bonus_cataclysm:
+		bonus_multiplier += 0.20
+	return bonus_multiplier
+
+func get_bonus_critical_damage_multiplier() -> float:
+	var crit_multiplier: float = 1.0
+	if bonus_bloodletting:
+		crit_multiplier += 0.05
+	if bonus_slayer_instinct:
+		crit_multiplier += 0.10
+	if bonus_cataclysm:
+		crit_multiplier += 0.20
+	return crit_multiplier
 
 func get_exp_required() -> int:
 	var curve: Array = EXP_REQUIRED_BY_LEVEL.get(unit_type, [12, 18, 24, 30])
@@ -281,15 +310,21 @@ func gain_exp_with_result(amount: int) -> Dictionary:
 
 func _level_up() -> void:
 	var previous_hp: int = hp
+	var was_dead: bool = previous_hp <= 0
 	level += 1
 	max_hp = get_max_hp()
-	var level_up_heal: int = maxi(2, int(round(float(max_hp) * 0.50)))
-	hp = mini(max_hp, previous_hp + level_up_heal)
+	if was_dead:
+		hp = 0
+	else:
+		var level_up_heal: int = maxi(2, int(round(float(max_hp) * 0.75)))
+		hp = mini(max_hp, previous_hp + level_up_heal)
 	attack_range = get_default_attack_range()
 	BonusSystem.reapply_stat_bonuses(self)
 	print("[Unit] %s subio a %s! HP:%d/%d MOV:%d" % [
 		unit_name, _level_name(), hp, max_hp, move_range
 	])
+	if was_dead:
+		return
 	AudioManager.play_level_up()
 	VFXManager.particles_level_up(visual_pos)
 	VFXManager.flash_unit(self, Color(0.95, 0.82, 0.20))
@@ -344,7 +379,9 @@ func has_ranged_attack() -> bool:
 	return has_extended_attack_range() and not get_ranged_dice().is_empty()
 
 func has_extended_attack_range() -> bool:
-	return unit_type == MASTER_UNIT_TYPE or unit_type == UnitType.ARCHER or unit_type == UnitType.LANCER
+	if unit_type == MASTER_UNIT_TYPE:
+		return not get_ranged_dice().is_empty()
+	return unit_type == UnitType.ARCHER or unit_type == UnitType.LANCER
 
 func get_default_attack_range() -> int:
 	return 2 if has_extended_attack_range() else 1

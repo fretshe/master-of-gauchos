@@ -109,8 +109,14 @@ const COMBAT_BAR_HEIGHT := 54.0
 const HUD_HP_SEGMENT_COLUMNS := 20
 const HUD_HP_SEGMENT_COUNT := 60
 const COMBAT_BLESSING_IDS := {
+	"tough_skin": true,
+	"hardened_hide": true,
+	"colossus": true,
 	"resistant": true,
 	"raider": true,
+	"bloodletting": true,
+	"slayer_instinct": true,
+	"cataclysm": true,
 	"fury": true,
 	"cleaver": true,
 	"executioner": true,
@@ -2483,7 +2489,7 @@ func _get_combat_preview_context(attacker, defender) -> Dictionary:
 	var defender_cell: Vector2i = defender.get_hex_cell() if defender != null and defender.has_method("get_hex_cell") else Vector2i(-1, -1)
 	var distance: int = hex_grid.get_distance_between_cells(attacker_cell, defender_cell) if attacker_cell != Vector2i(-1, -1) and defender_cell != Vector2i(-1, -1) else 1
 	var is_ranged: bool = attacker != null and attacker.has_method("can_attack_at_distance") and attacker.can_attack_at_distance(distance) and distance > 1
-	var defender_ranged_response: bool = is_ranged and defender != null and defender.has_method("can_attack_at_distance") and defender.can_attack_at_distance(distance)
+	var defender_ranged_response: bool = is_ranged and defender != null and defender.has_method("has_ranged_attack") and defender.has_ranged_attack() and defender.has_method("can_attack_at_distance") and defender.can_attack_at_distance(distance)
 	var attacker_terrain: int = int(hex_grid.call("get_terrain_at", attacker_cell.x, attacker_cell.y)) if attacker_cell != Vector2i(-1, -1) else 0
 	var defender_terrain: int = int(hex_grid.call("get_terrain_at", defender_cell.x, defender_cell.y)) if defender_cell != Vector2i(-1, -1) else 0
 	var attacker_hits: int = attacker.get_attack_count_for_terrain(attacker_terrain) if attacker != null and attacker.has_method("get_attack_count_for_terrain") else 0
